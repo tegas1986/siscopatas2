@@ -1,0 +1,1904 @@
+/**
+ * BACKEND GAS SISCOPATAS 
+ * Pondasi: Arsitektur Stabil Milik Sultan
+ * Patch: Validasi Penilaian Kualitatif Pengukuran SNI & Rekomendasi Seleksi
+ */
+
+function setupDatabase() {
+  const ss = SpreadsheetApp.openById(SpreadsheetApp.getActiveSpreadsheet().getId());
+  const sheets = [
+    {name: "Users", cols: ["id_user", "username", "password", "role", "status", "permissions", "created_at"]},
+    {name: "Petugas Reproduksi", cols: ["id_petugas", "nama_petugas", "jabatan", "input_by"]},
+    {name: "Petugas Keswan", cols: ["id_petugas", "nama_petugas", "jabatan", "input_by"]},
+    {name: "Database Bull", cols: ["id_record_bull", "nama_bull", "rumpun", "asal", "stok_awal", "stok_saat_ini", "input_by"]},
+    {name: "Database Ternak", cols: ["id_ternak", "rumpun_ternak", "tanggal_lahir", "jenis_kelamin", "umur (bulan)", "kategori", "bapak", "induk", "status_ternak", "tanggal_kejadian", "lokasi_saat_ini", "catatan", "input_by"]},
+    {name: "Laporan Berahi", cols: ["id_lapor", "tanggal_lapor", "eartag", "rumpun", "derajat_berahi", "rekomendasi", "keterangan", "status_ib", "input_by"]},
+    {name: "Database IB", cols: ["id_ib", "id_lapor", "tanggal_ib", "eartag", "rumpun", "derajat_berahi", "nama_bull", "inseminator", "input_by"]},
+    {name: "Keswan", cols: ["id_keswan", "tanggal", "id_ternak", "diagnosa", "treatment", "petugas", "input_by"]},
+    {name: "Laporan Gangrep", cols: ["id_gangrep", "tanggal_lapor", "eartag", "rumpun", "keterangan_pelapor", "diagnosa_keswan", "tindakan_keswan", "petugas_keswan", "status_akhir", "input_by"]},
+    {name: "Database Kebuntingan", cols: ["id_pkb", "eartag", "rumpun", "tanggal_ib", "tanggal_pemeriksaan", "hasil_pemeriksaan", "prediksi_bulan", "hpl", "petugas_pemeriksa", "input_by"]},
+    {name: "Database Kelahiran", cols: ["id_kelahiran", "tanggal_lahir", "eartag_induk", "rumpun_induk", "eartag_anak", "jenis_kelamin", "rumpun_anak", "bapak", "link_foto", "input_by"]},
+    // PATCH V1.3.0: Penambahan Kolom rekomendasi_seleksi
+    {name: "Database Pengukuran", cols: ["id_ukur", "tanggal_ukur", "eartag", "rumpun", "sex", "tanggal_lahir", "bapak", "induk", "periode_ukur", "panjang_badan", "lingkar_dada", "tinggi_pundak", "berat_badan", "lingkar_scrotum", "penilaian_kualitatif", "keterangan", "grade_sni", "rekomendasi_seleksi", "keterangan_audit_admin", "input_by"]},
+    // Di dalam setupDatabase()
+    {name: "Log_Audit_Eartag", cols: ["id_log", "tanggal_hapus", "eartag_anak", "rumpun_anak", "eartag_induk", "keterangan_status", "dihapus_oleh"]},
+    {name: "Ref_Lokasi", cols: ["id_lokasi", "nama_lokasi", "nama_blok", "status"]},
+    {name: "Log_Mutasi", cols: ["id_mutasi", "tanggal_mutasi", "eartag", "dari_lokasi","lokasi_saat_ini", "alasan", "input_by"]},
+    // PATCH: Sheet Laporan Penjualan (menyimpan transaksi harga/tanggal jual/status distribusi per eartag)
+    {name: "Laporan Penjualan", cols: ["id_penjualan", "eartag", "rumpun", "harga", "tanggal_jual", "status_distribusi", "no_billing", "keterangan", "input_by"]},
+      ];
+
+  sheets.forEach(s => {
+    let sh = ss.getSheetByName(s.name);
+    if (!sh) {
+      sh = ss.insertSheet(s.name);
+      sh.getRange(1, 1, 1, s.cols.length).setValues([s.cols]).setFontWeight("bold");
+      if (s.name === "Users") sh.appendRow(["U001", "admin", "admin2026", "Super Admin", "Aktif", new Date()]);
+    }
+  });
+  return "Database Berhasil Di-Setup ke V1.3.0!";
+}
+
+function doPost(e) {
+  try {
+    const result = doPostLogic(JSON.parse(e.postData.contents));
+    return ContentService.createTextOutput(JSON.stringify({result: JSON.parse(result)})).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({error: err.message})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doPostLogic(req) {
+  const action = req.action; 
+  const username = req.username; 
+  const payload = req.payload;
+  const ss = SpreadsheetApp.openById(SpreadsheetApp.getActiveSpreadsheet().getId());
+
+  if (action === 'login') {
+    const data = getSheetDataAsJSON(ss.getSheetByName("Users"));
+    const user = data.find(u => u.username === payload.username && u.password === payload.password && u.status === 'Aktif');
+    if (user) { delete user.password; return JSON.stringify(user); }
+    return JSON.stringify(null);
+  }
+
+  const currentUser = getSheetDataAsJSON(ss.getSheetByName("Users")).find(u => u.username === username);
+  if (!currentUser) throw new Error("Maaf, Anda tidak memiliki izin untuk melakukan perubahan pada data ini!"); 
+  const role = currentUser.role;
+  let result = null;
+
+  switch(action) {
+
+
+    case 'addmutasimasal':
+      if (!['Super Admin', 'Admin Wasbit'].includes(role)) throw new Error("Akses Ditolak! Anda tidak memiliki izin mutasi massal.");
+      
+      var daftarEartag = payload.daftar_eartag; 
+      var dariLokasi = payload.dari_lokasi;
+      var lokasiBaru = payload.lokasi_saat_ini;
+      var alasan = payload.alasan || 'Mutasi Masal';
+      var tanggalMutasi = payload.tanggal_mutasi; // Format: DD/MM/YYYY
+      var usernameOperator = username;
+
+      // 1. Update Lokasi Terkini di Sheet Database Utama ('Database Ternak')
+      var sheetDB = ss.getSheetByName('Database Ternak');
+      var dataDB = sheetDB.getDataRange().getValues();
+      var headerDB = dataDB[0];
+      var idTernakIdx = headerDB.indexOf('id_ternak');
+      var lokasiIdx = headerDB.indexOf('lokasi_saat_ini');
+
+      if (idTernakIdx === -1 || lokasiIdx === -1) {
+        throw new Error("Struktur kolom database utama tidak valid atau hilang!");
+      }
+
+      for (var i = 1; i < dataDB.length; i++) {
+        var eartagSapi = String(dataDB[i][idTernakIdx]).trim();
+        if (daftarEartag.indexOf(eartagSapi) > -1) {
+          sheetDB.getRange(i + 1, lokasiIdx + 1).setValue(formatEartag(lokasiBaru));
+        }
+      }
+
+      // 2. Tulis Baris Log Baru ke Sheet Log Mutasi ('Log_Mutasi')
+      var sheetLog = ss.getSheetByName('Log_Mutasi');
+      var headerLog = sheetLog.getDataRange().getValues()[0];
+      var timestamp = new Date().getTime();
+      
+      for (var j = 0; j < daftarEartag.length; j++) {
+        var rowData = [];
+        for (var k = 0; k < headerLog.length; k++) {
+          var colName = headerLog[k];
+          if (colName === 'id_mutasi') rowData.push('MUT-' + timestamp + '-' + j);
+          else if (colName === 'tanggal_mutasi') rowData.push(tanggalMutasi);
+          else if (colName === 'eartag') rowData.push(formatEartag(daftarEartag[j]));
+          else if (colName === 'dari_lokasi') rowData.push(dariLokasi);
+          else if (colName === 'lokasi_saat_ini') rowData.push(lokasiBaru);
+          else if (colName === 'durasi_hari') rowData.push(''); // Biarkan kosong, dihitung live oleh Frontend
+          else if (colName === 'alasan') rowData.push(alasan);
+          else if (colName === 'input_by') rowData.push(usernameOperator);
+          else rowData.push('');
+        }
+        sheetLog.appendRow(rowData);
+      }
+
+      result = true;
+      break;;
+
+
+
+
+    case 'executePasangEartag':
+      if (!['Super Admin', 'Admin Wasbit'].includes(role)) throw new Error("Akses Ditolak! Hanya Level Super Admin atau Admin Wasbit yang berhak mengubah identitas vital eartag.");
+      
+      var oldTag = payload.eartag_lama;
+      var newTag = formatEartag(payload.eartag_baru.toUpperCase().trim());
+      
+      // 1. Pembaruan otomatis kolom eartag_anak di Sheet Database Kelahiran
+      var sheetKelahiran = ss.getSheetByName("Database Kelahiran");
+      updateRowByColumn(sheetKelahiran, "eartag_anak", oldTag, { eartag_anak: newTag });
+      
+      // 2. Pembaruan otomatis kolom id_ternak di Sheet Database Ternak
+      var sheetTernak = ss.getSheetByName("Database Ternak");
+      result = updateRowByColumn(sheetTernak, "id_ternak", oldTag, { id_ternak: newTag }); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+
+
+      case 'updatemutasi':
+      if (!['Super Admin', 'Admin Wasbit', 'Admin Keswan'].includes(role)) throw new Error("Akses Ditolak! Anda tidak memiliki otoritas.");
+      
+      // 1. Perbarui baris historis di Sheet Log_Mutasi
+      updateRowByColumn(ss.getSheetByName("Log_Mutasi"), "id_mutasi", payload.id_mutasi, payload);
+      
+      // 2. Sinkronisasikan otomatis lokasi terbarunya ke Sheet Database Ternak Utama
+      result = updateRowByColumn(ss.getSheetByName("Database Ternak"), "id_ternak", payload.eartag, {
+        "lokasi_saat_ini": payload.lokasi_saat_ini
+      }); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+
+
+      case 'deletemutasi':
+  if (role !== 'Super Admin') throw new Error("Akses Ditolak! Hanya Super Admin yang bisa menghapus log mutasi.");
+  result = deleteRowByColumn(ss.getSheetByName("Log_Mutasi"), "id_mutasi", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan."); break;
+
+    case 'getInitialData':
+      let responseData = {};
+      // Pastikan users diambil dengan benar
+      if (role === 'Super Admin') {
+        responseData.dataUsers = getSheetDataAsJSON(ss.getSheetByName("Users")).map(u => ({...u, password: '***'}));
+      }
+      if (['Super Admin', 'Admin Wasbit', 'User Wasbit'].includes(role)) {
+        responseData.dataPetugasRepro = getSheetDataAsJSON(ss.getSheetByName("Petugas Reproduksi"));
+        responseData.dataBull = getSheetDataAsJSON(ss.getSheetByName("Database Bull"));
+        responseData.dataLaporanBerahi = getSheetDataAsJSON(ss.getSheetByName("Laporan Berahi"));
+        responseData.dataIB = getSheetDataAsJSON(ss.getSheetByName("Database IB"));
+        responseData.dataPKB = getSheetDataAsJSON(ss.getSheetByName("Database Kebuntingan"));
+        
+      }
+      if (['Super Admin', 'Admin Keswan', 'User Keswan'].includes(role)) {
+        responseData.dataPetugasKeswan = getSheetDataAsJSON(ss.getSheetByName("Petugas Keswan"));
+        responseData.dataKeswan = getSheetDataAsJSON(ss.getSheetByName("Keswan"));
+      }
+      if (['Super Admin', 'Admin Wasbit', 'User Wasbit', 'Admin Keswan', 'User Keswan', 'Viewer', 'Admin IJP', 'User IJP'].includes(role)) {
+        responseData.dataDatabase = getSheetDataAsJSON(ss.getSheetByName("Database Ternak"));
+        responseData.dataGangrep = getSheetDataAsJSON(ss.getSheetByName("Laporan Gangrep"));
+        responseData.dataKelahiran = getSheetDataAsJSON(ss.getSheetByName("Database Kelahiran"));
+        responseData.dataPengukuran = getSheetDataAsJSON(ss.getSheetByName("Database Pengukuran"));
+        responseData.dataAturanSNI = getSheetDataAsJSON_Cached(ss.getSheetByName("ref_sni"), "ref_sni_v1", 1800);
+responseData.dataLokasi   = getSheetDataAsJSON_Cached(ss.getSheetByName("Ref_Lokasi"), "ref_lokasi_v1", 1800);
+        responseData.dataMutasi = getSheetDataAsJSON(ss.getSheetByName("Log_Mutasi"));
+      }
+      // PATCH: dataPenjualan untuk semua role yang berpotensi memegang akses menu Laporan Penjualan
+      // (role IJP baru + role lama yang sebelumnya sudah bisa lihat tab Penjualan lewat checklist)
+      if (['Super Admin', 'Admin Wasbit', 'User Wasbit', 'Admin Keswan', 'User Keswan', 'Viewer', 'Admin IJP', 'User IJP'].includes(role)) {
+        responseData.dataPenjualan = getSheetDataAsJSON(ss.getSheetByName("Laporan Penjualan"));
+      }
+      result = responseData;
+      break;
+
+    case 'refreshTab':
+      if (payload.tab === 'database') result = getSheetDataAsJSON(ss.getSheetByName("Database Ternak"));
+      else if (payload.tab === 'kelahiran') result = getSheetDataAsJSON(ss.getSheetByName("Database Kelahiran"));
+      else if (payload.tab === 'ib') result = getSheetDataAsJSON(ss.getSheetByName("Database IB"));
+      else if (payload.tab === 'pkb') result = getSheetDataAsJSON(ss.getSheetByName("Database Kebuntingan"));
+      else if (payload.tab === 'laporan_berahi') result = getSheetDataAsJSON(ss.getSheetByName("Laporan Berahi"));
+      else if (payload.tab === 'keswan') result = getSheetDataAsJSON(ss.getSheetByName("Keswan"));
+      else if (payload.tab === 'gangrep') result = getSheetDataAsJSON(ss.getSheetByName("Laporan Gangrep"));
+      else if (payload.tab === 'bull') result = getSheetDataAsJSON(ss.getSheetByName("Database Bull"));
+      else if (payload.tab === 'pengukuran') result = getSheetDataAsJSON(ss.getSheetByName("Database Pengukuran"));
+      else if (payload.tab === 'aturan_sni') result = getSheetDataAsJSON(ss.getSheetByName("ref_sni"));
+      else if (payload.tab === 'ref_lokasi') result = getSheetDataAsJSON(ss.getSheetByName("Ref_Lokasi"));
+      else if (payload.tab === 'mutasi_lokasi') {result = getSheetDataAsJSON(ss.getSheetByName("Log_Mutasi"));
+      }
+      // PATCH: refresh tab Laporan Penjualan sebelumnya tidak ada, selalu jatuh ke else result=[]
+      else if (payload.tab === 'penjualan') result = getSheetDataAsJSON(ss.getSheetByName("Laporan Penjualan"));
+      else result = [];
+      break;
+
+    case 'getLokasi': result = getSheetDataAsJSON(ss.getSheetByName("Ref_Lokasi")); break;
+
+    case 'addlokasi':
+  if (role !== 'Super Admin') throw new Error("Akses Ditolak!");
+  
+  // CEK DUPLIKAT DI SHEET
+  const dataLokasi = getSheetDataAsJSON(ss.getSheetByName("Ref_Lokasi"));
+  const exists = dataLokasi.some(r => String(r.id_lokasi).toLowerCase() === String(payload.id_lokasi).toLowerCase());
+  
+  if (exists) {
+    throw new Error("Gagal: ID Lokasi '" + payload.id_lokasi + "' sudah ada di Database!");
+  }
+  
+  // JIKA AMAN, LANJUTKAN APPEND
+  ss.getSheetByName("Ref_Lokasi").appendRow([payload.id_lokasi, payload.nama_lokasi, payload.nama_blok, payload.status]);
+  invalidateCache("ref_lokasi_v1");
+  result = true; 
+  break;
+
+
+
+    case 'updatelokasi': if (role !== 'Super Admin') throw new Error("Akses Ditolak!"); result = updateRowByColumn(ss.getSheetByName("Ref_Lokasi"), "id_lokasi", payload.id_lokasi, payload); if (!result) throw new Error("Update gagal: data tidak ditemukan.");
+    invalidateCache("ref_lokasi_v1");
+     break;
+
+
+    case 'deletelokasi': if (role !== 'Super Admin') throw new Error("Akses Ditolak!"); result = deleteRowByColumn(ss.getSheetByName("Ref_Lokasi"), "id_lokasi", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan.");
+    invalidateCache("ref_lokasi_v1");
+     break;
+
+
+    case 'addmutasi':
+      // Urutan array ini harus sesuai dengan header A-H di atas
+      ss.getSheetByName("Log_Mutasi").appendRow([
+        "MUT-" + new Date().getTime(), // A: id_mutasi
+        payload.tanggal_mutasi,        // B: tanggal_mutasi
+        formatEartag(payload.eartag),  // C: eartag
+        payload.dari_lokasi,           // D: dari_lokasi
+        payload.lokasi_saat_ini,       // E: lokasi_saat_ini
+        "",                            // F: durasi_hari (Dihitung Live di Frontend)
+        payload.alasan,                // G: alasan
+        username                       // H: input_by
+      ]);
+
+      result = updateRowByColumn(ss.getSheetByName("Database Ternak"), "id_ternak", payload.eartag, {
+        "lokasi_saat_ini": payload.lokasi_saat_ini 
+      }); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+
+
+  case 'updatemutasi':
+      if (!['Super Admin', 'Admin Wasbit', 'Admin Keswan'].includes(role)) {
+        throw new Error("Akses Ditolak!");
+      }
+
+      const sheetMutasi = ss.getSheetByName("Log_Mutasi");
+      
+      // Update baris di Log_Mutasi saja
+      updateRowByColumn(sheetMutasi, "id_mutasi", payload.id_mutasi, {
+        "tanggal_mutasi": payload.tanggal_mutasi,
+        "eartag": payload.eartag,
+        "dari_lokasi": payload.dari_lokasi,
+        "lokasi_saat_ini": payload.lokasi_saat_ini,
+        "alasan": payload.alasan
+      });
+
+      // Sinkronisasi ke Database Ternak (Jika perlu untuk tampilan saja) 
+      // Tapi untuk lokasi, biarkan data tetap di sheet Log_Mutasi sebagai master.
+      result = true;
+      break;
+
+
+    
+
+    case 'deletemutasi':
+      if (role !== 'Super Admin') throw new Error("Akses Ditolak! Hanya Super Admin yang bisa menghapus log mutasi.");
+
+      // Cukup gunakan variabel langsung tanpa 'var' atau 'const' jika sudah ada di atas
+      // Atau, gunakan scope {} agar variabel bersifat lokal
+      {
+        let sheetMutasi = ss.getSheetByName("Log_Mutasi");
+        let dataMutasi = getSheetDataAsJSON(sheetMutasi);
+
+        // 1. Cari data mutasi yang akan dihapus
+        let logMutasi = dataMutasi.find(function(m) { return m.id_mutasi == payload.id; });
+
+        if (logMutasi) {
+          // 2. Hapus baris di sheet Log_Mutasi
+          deleteRowByColumn(sheetMutasi, "id_mutasi", payload.id);
+          result = true;
+        } else {
+          throw new Error("Data log mutasi tidak ditemukan!");
+        }
+      }
+      break;
+
+    case 'getPetugasRepro': result = getSheetDataAsJSON(ss.getSheetByName("Petugas Reproduksi")); break;
+    case 'addpetugas_repro': if (role !== 'Super Admin') throw new Error("Ditolak!"); ss.getSheetByName("Petugas Reproduksi").appendRow(["PR-" + new Date().getTime(), payload.nama_petugas, payload.jabatan, username]); result = true; break;
+    case 'updatepetugas_repro': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = updateRowByColumn(ss.getSheetByName("Petugas Reproduksi"), "id_petugas", payload.id_petugas, payload); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+    case 'deletepetugas_repro': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = deleteRowByColumn(ss.getSheetByName("Petugas Reproduksi"), "id_petugas", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan."); break;
+
+    case 'getPetugasKeswan': result = getSheetDataAsJSON(ss.getSheetByName("Petugas Keswan")); break;
+    case 'addpetugas_keswan': if (role !== 'Super Admin') throw new Error("Ditolak!"); ss.getSheetByName("Petugas Keswan").appendRow(["PK-" + new Date().getTime(), payload.nama_petugas, payload.jabatan, username]); result = true; break;
+    case 'updatepetugas_keswan': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = updateRowByColumn(ss.getSheetByName("Petugas Keswan"), "id_petugas", payload.id_petugas, payload); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+    case 'deletepetugas_keswan': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = deleteRowByColumn(ss.getSheetByName("Petugas Keswan"), "id_petugas", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan."); break;
+
+    case 'getUsers': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = getSheetDataAsJSON(ss.getSheetByName("Users")).map(u => ({...u, password: '***'})); break;
+    case 'adduser': 
+    if (role !== 'Super Admin') throw new Error("Ditolak!"); 
+    ss.getSheetByName("Users").appendRow([
+        "U" + new Date().getTime(), // 0: id_user
+        payload.username,           // 1: username
+        payload.password,           // 2: password
+        payload.role,               // 3: role
+        "Aktif",                    // 4: status
+        payload.permissions,        // 5: permissions
+        new Date()                  // 6: created_at
+    ]); 
+    result = true; break;
+    case 'updateuser': if (role !== 'Super Admin') throw new Error("Ditolak!"); let uD = {username: payload.username, role: payload.role, permissions: payload.permissions}; if(payload.password !== '***') uD.password = payload.password; result = updateRowByColumn(ss.getSheetByName("Users"), "id_user", payload.id_user, uD); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+    case 'deleteuser': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = deleteRowByColumn(ss.getSheetByName("Users"), "id_user", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan."); break;
+    case 'updatepermissions':
+      if (role !== 'Super Admin') throw new Error("Ditolak!");
+      result = updateRowByColumn(ss.getSheetByName("Users"), "id_user", payload.id_user, {permissions: payload.permissions}); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+
+    case 'getDatabase': result = getSheetDataAsJSON(ss.getSheetByName("Database Ternak")); break;
+
+
+    
+    case 'adddatabase':
+      if (!['Super Admin', 'Admin Wasbit', 'User Wasbit', 'Admin Keswan', 'User Keswan'].includes(role)) throw new Error("Ditolak!");
+      if (getSheetDataAsJSON(ss.getSheetByName("Database Ternak")).some(r => r.id_ternak === payload.id_ternak)) throw new Error("ID Ternak terdaftar!");
+      
+      var teksUmurMatang = "-";   // dulu: hasil hitung Thn/Bln/Hr
+  var kategoriDinamis = "-";  // dulu: hasil hitung Anak/Muda/Dewasa
+      // ---------------------------------------------------------------------------------
+      
+      // Menambah kolom langsung berupa nilai text murni (Bukan rumus string)
+      ss.getSheetByName("Database Ternak").appendRow([
+        formatEartag(payload.id_ternak), 
+        payload.rumpun_ternak, 
+        payload.tanggal_lahir, 
+        payload.jenis_kelamin, 
+        teksUmurMatang,      // Kolom 5: umur (bulan) - Sekarang berisi teks durasi matang
+        kategoriDinamis,    // Kolom 6: kategori - Sekarang dihitung aman di server
+        formatEartag(payload.bapak), 
+        formatEartag(payload.induk), 
+        payload.status_ternak, 
+        payload.tanggal_kejadian,
+        payload.lokasi_saat_ini || "-", 
+        payload.catatan || "", 
+        username
+      ]);
+      result = true; 
+      break;
+
+    case 'updatedatabase':
+  if (!['Super Admin', 'Admin Wasbit', 'Admin Keswan'].includes(role)) {
+    throw new Error("Akses Ditolak! Anda tidak memiliki otoritas untuk mengedit data ini.");
+  }
+  // Memanggil fungsi utilitas updateRowByColumn yang sudah ada di bawah
+  result = updateRowByColumn(ss.getSheetByName("Database Ternak"), "id_ternak", payload.id_ternak, payload);
+  if (!result) throw new Error("Update gagal: id_ternak '" + payload.id_ternak + "' tidak ditemukan di Database Ternak.");
+  break;
+
+    case 'deletedatabase':
+      if (role !== 'Super Admin') throw new Error("Ditolak!");
+      result = deleteRowByColumn(ss.getSheetByName("Database Ternak"), "id_ternak", payload.id);
+      if (!result) throw new Error("Hapus gagal: id '" + payload.id + "' tidak ditemukan di Database Ternak.");
+      break;
+
+    // PATCH: Laporan Penjualan — sebelumnya case ini TIDAK ADA sama sekali di backend
+    // (frontend sudah memanggil addpenjualan/updatepenjualan tapi selalu gagal karena tidak ada case-nya)
+    case 'getPenjualan':
+      result = getSheetDataAsJSON(ss.getSheetByName("Laporan Penjualan")); break;
+
+    case 'addpenjualan':
+      // Admin IJP & User IJP: bisa Create. Role lama (Super Admin, Admin Wasbit) tetap bisa.
+      if (!['Super Admin', 'Admin Wasbit', 'Admin IJP', 'User IJP'].includes(role)) {
+        throw new Error("Akses Ditolak! Anda tidak memiliki izin untuk menambah data Laporan Penjualan.");
+      }
+      ss.getSheetByName("Laporan Penjualan").appendRow([
+        payload.id_penjualan || ('PJL-' + new Date().getTime()),
+        formatEartag(payload.eartag),
+        payload.rumpun || "-",
+        payload.harga || "",
+        payload.tanggal_jual || "-",
+        payload.status_distribusi || "-",
+        payload.no_billing || "-",
+        payload.keterangan || "-",
+        username
+      ]);
+      result = true;
+      break;
+
+    case 'updatepenjualan':
+      // Admin IJP: bisa Update. User IJP TIDAK bisa (hanya CR sesuai permintaan).
+      if (!['Super Admin', 'Admin Wasbit', 'Admin IJP'].includes(role)) {
+        throw new Error("Akses Ditolak! Anda tidak memiliki izin untuk mengubah data Laporan Penjualan.");
+      }
+      result = updateRowByColumn(ss.getSheetByName("Laporan Penjualan"), "id_penjualan", payload.id_penjualan, payload); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+
+    case 'getBull': result = getSheetDataAsJSON(ss.getSheetByName("Database Bull")); break;
+    case 'addbull': 
+      if (role !== 'Super Admin') throw new Error("Ditolak!"); 
+      
+      // Mengunci nilai angka agar aman dari manipulasi teks kosong
+      var sAwal = Number(payload.stok_awal) || 0;
+      // Jika stok_saat_ini kosong atau 0, paksa nilainya menyamai stok_awal
+      var sSaatIni = payload.stok_saat_ini ? Number(payload.stok_saat_ini) : sAwal;
+      if (sSaatIni === 0) sSaatIni = sAwal; 
+
+      ss.getSheetByName("Database Bull").appendRow([
+        "BULL-" + new Date().getTime(), 
+        payload.nama_bull, 
+        payload.rumpun, 
+        payload.asal, 
+        sAwal, 
+        sSaatIni, 
+        username
+      ]); 
+      result = true; 
+      break;
+
+    case 'updatebull': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = updateRowByColumn(ss.getSheetByName("Database Bull"), "id_record_bull", payload.id_record_bull, payload); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+    case 'deletebull': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = deleteRowByColumn(ss.getSheetByName("Database Bull"), "id_record_bull", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan."); break;
+
+    case 'addlaporan_berahi':
+  if (!['Super Admin', 'Admin Wasbit', 'User Wasbit'].includes(role)) throw new Error("Ditolak!");
+
+  var eartagLaporNorm = normalizeString(payload.eartag);
+  var dataLaporanBerahiExisting = getSheetDataAsJSON(ss.getSheetByName("Laporan Berahi"));
+  var duplikatLaporBerahi = dataLaporanBerahiExisting.some(function(l) {
+    return normalizeString(l.eartag) === eartagLaporNorm &&
+           String(l.tanggal_lapor).trim() === String(payload.tanggal_lapor).trim();
+  });
+  if (duplikatLaporBerahi) {
+    throw new Error("Gagal: Eartag '" + payload.eartag + "' sudah dilaporkan berahi untuk tanggal " + payload.tanggal_lapor + "!");
+  }
+
+  let statusIB = (payload.rekomendasi === 'Tidak Layak IB') ? "Gangrep" : "Belum";
+
+  ss.getSheetByName("Laporan Berahi").appendRow(["LAP-" + new Date().getTime(), payload.tanggal_lapor, formatEartag(payload.eartag), payload.rumpun, payload.derajat_berahi, payload.rekomendasi, payload.keterangan || "-", statusIB, username]);
+
+  // KOREKSI SULTAN: Status awal otomatis masuk ke 'Menunggu Treatment' agar hitung mundur 14 hari aktif
+  if (payload.rekomendasi === 'Tidak Layak IB') {
+    ss.getSheetByName("Laporan Gangrep").appendRow(["GR-" + new Date().getTime(), payload.tanggal_lapor, formatEartag(payload.eartag), payload.rumpun, payload.keterangan || "-", "", "", "", "Menunggu Treatment", username]);
+  }
+
+  result = true; break;
+
+
+      case 'bulk_add_berahi':
+      result = bulk_add_berahi(payload);
+      break;
+
+      case 'bulk_add_ib':
+      if (!['Super Admin', 'Admin Wasbit', 'User Wasbit'].includes(role)) throw new Error("Ditolak!");
+      result = bulk_add_ib(payload);
+      break;
+
+      case 'bulk_add_kelahiran':
+      if (!['Super Admin', 'Admin Wasbit', 'User Wasbit', 'Admin Keswan', 'User Keswan'].includes(role)) throw new Error("Ditolak! Anda tidak memiliki otoritas upload massal kelahiran.");
+      result = bulk_add_kelahiran(payload);
+      break;
+
+    
+    case 'deletelaporan_berahi':
+  if (role !== 'Super Admin') throw new Error("Akses Ditolak! Hanya Super Admin yang bisa menghapus laporan berahi.");
+  result = deleteRowByColumn(ss.getSheetByName("Laporan Berahi"), "id_lapor", payload.id);
+  if (!result) throw new Error("Hapus gagal: data tidak ditemukan.");
+  break;
+    
+    
+    case 'updatelaporan_berahi':
+  if (!['Super Admin', 'Admin Wasbit'].includes(role)) throw new Error("Ditolak!");
+
+  var eartagUpdNorm = normalizeString(payload.eartag);
+  var dataLaporanBerahiUpd = getSheetDataAsJSON(ss.getSheetByName("Laporan Berahi"));
+  var duplikatLaporBerahiUpd = dataLaporanBerahiUpd.some(function(l) {
+    return String(l.id_lapor) !== String(payload.id_lapor) && // abaikan baris dirinya sendiri
+           normalizeString(l.eartag) === eartagUpdNorm &&
+           String(l.tanggal_lapor).trim() === String(payload.tanggal_lapor).trim();
+  });
+  if (duplikatLaporBerahiUpd) {
+    throw new Error("Gagal: Eartag '" + payload.eartag + "' sudah punya laporan berahi lain pada tanggal " + payload.tanggal_lapor + "!");
+  }
+
+  result = updateRowByColumn(ss.getSheetByName("Laporan Berahi"), "id_lapor", payload.id_lapor, payload);
+  if (!result) throw new Error("Update gagal: data tidak ditemukan.");
+  break;
+
+    case 'addib':
+      if (!['Super Admin', 'Admin Wasbit', 'User Wasbit'].includes(role)) throw new Error("Ditolak!");
+      ss.getSheetByName("Database IB").appendRow(["IB-" + new Date().getTime(), payload.id_lapor, payload.tanggal_ib, formatEartag(payload.eartag), payload.rumpun, payload.derajat_berahi, payload.nama_bull, payload.inseminator, username]);
+      updateRowByColumn(ss.getSheetByName("Laporan Berahi"), "id_lapor", payload.id_lapor, {status_ib: "Sudah"});
+      updateBullStock(ss.getSheetByName("Database Bull"), payload.nama_bull, -1);
+      result = true; break;
+    case 'updateib':
+      if (!['Super Admin', 'Admin Wasbit'].includes(role)) throw new Error("Ditolak!");
+      const sheetIBUpdate = ss.getSheetByName("Database IB");
+      const rawDataUpdate = sheetIBUpdate.getDataRange().getValues();
+      const headersUpdate = rawDataUpdate[0].map(h => h.toString().trim().toLowerCase());
+      const idxIdUpdate = headersUpdate.indexOf("id_ib");
+      const idxBullUpdate = headersUpdate.indexOf("nama_bull") !== -1 ? headersUpdate.indexOf("nama_bull") : headersUpdate.findIndex(h => h.includes("bull"));
+      let oldBull = null;
+      if (idxIdUpdate !== -1 && idxBullUpdate !== -1) {
+        for (let i = 1; i < rawDataUpdate.length; i++) {
+          if (rawDataUpdate[i][idxIdUpdate] == payload.id_ib) { oldBull = rawDataUpdate[i][idxBullUpdate]; break; }
+        }
+      }
+      if (oldBull && payload.nama_bull && normalizeString(oldBull) !== normalizeString(payload.nama_bull)) {
+        updateBullStock(ss.getSheetByName("Database Bull"), oldBull, 1);
+        updateBullStock(ss.getSheetByName("Database Bull"), payload.nama_bull, -1);
+      }
+      result = updateRowByColumn(sheetIBUpdate, "id_ib", payload.id_ib, payload); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+    case 'deleteib':
+      if (role !== 'Super Admin') throw new Error("Ditolak!");
+      const sheetIB = ss.getSheetByName("Database IB");
+      const rawDataIB = sheetIB.getDataRange().getValues();
+      if (rawDataIB.length > 1) {
+        const headersIB = rawDataIB[0].map(h => h.toString().trim().toLowerCase());
+        const idIdx = headersIB.indexOf("id_ib");
+        const laporIdx = headersIB.indexOf("id_lapor");
+        const bullIdx = headersIB.indexOf("nama_bull") !== -1 ? headersIB.indexOf("nama_bull") : headersIB.findIndex(h => h.includes("bull"));
+        let targetIdLapor = null; let targetBull = null;
+        for (let i = 1; i < rawDataIB.length; i++) {
+          if (rawDataIB[i][idIdx] == payload.id) {
+            if(laporIdx !== -1) targetIdLapor = rawDataIB[i][laporIdx];
+            if(bullIdx !== -1) targetBull = rawDataIB[i][bullIdx]; break;
+          }
+        }
+        if (targetIdLapor) { updateRowByColumn(ss.getSheetByName("Laporan Berahi"), "id_lapor", targetIdLapor, {status_ib: "Belum"}); }
+        if (targetBull) { updateBullStock(ss.getSheetByName("Database Bull"), targetBull, 1); }
+      }
+      result = deleteRowByColumn(sheetIB, "id_ib", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan."); break;
+
+    case 'addkeswan': if (!['Super Admin', 'Admin Keswan', 'User Keswan'].includes(role)) throw new Error("Ditolak!"); ss.getSheetByName("Keswan").appendRow(["KES-" + new Date().getTime(), payload.tanggal, formatEartag(payload.id_ternak), payload.diagnosa, payload.treatment, payload.petugas, username]); result = true; break;
+    case 'updatekeswan': if (!['Super Admin', 'Admin Keswan'].includes(role)) throw new Error("Ditolak!"); result = updateRowByColumn(ss.getSheetByName("Keswan"), "id_keswan", payload.id_keswan, payload); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+    case 'deletekeswan': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = deleteRowByColumn(ss.getSheetByName("Keswan"), "id_keswan", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan."); break;
+
+    
+    case 'updategangrep': if (!['Super Admin', 'Admin Keswan'].includes(role)) throw new Error("Ditolak!"); result = updateRowByColumn(ss.getSheetByName("Laporan Gangrep"), "id_gangrep", payload.id_gangrep, payload); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+    case 'deletegangrep': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = deleteRowByColumn(ss.getSheetByName("Laporan Gangrep"), "id_gangrep", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan."); break;
+
+    case 'addpkb':
+      if (!['Super Admin', 'Admin Wasbit', 'User Wasbit'].includes(role)) throw new Error("Ditolak!");
+      ss.getSheetByName("Database Kebuntingan").appendRow(["PKB-" + new Date().getTime(), formatEartag(payload.eartag), payload.rumpun, payload.tanggal_ib, payload.tanggal_pemeriksaan, payload.hasil_pemeriksaan, payload.prediksi_bulan || "-", payload.hpl || "-", payload.petugas_pemeriksa, username]);
+      result = true; break;
+    case 'updatepkb': if (!['Super Admin', 'Admin Wasbit'].includes(role)) throw new Error("Ditolak!"); result = updateRowByColumn(ss.getSheetByName("Database Kebuntingan"), "id_pkb", payload.id_pkb, payload); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+    case 'deletepkb': if (role !== 'Super Admin') throw new Error("Ditolak!"); result = deleteRowByColumn(ss.getSheetByName("Database Kebuntingan"), "id_pkb", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan."); break;
+
+    case 'addkelahiran':
+      if (!['Super Admin', 'Admin Wasbit', 'User Wasbit', 'Admin Keswan', 'User Keswan'].includes(role)) 
+        throw new Error("Ditolak! Anda tidak memiliki otoritas.");
+
+      // 1. ENGINE DOKUMENTASI
+      const uploadPedetFoto = (base64, mime, name) => {
+        if (!base64) return "";
+        try {
+          let folder = DriveApp.getFoldersByName("Galeri Pedet").hasNext() ? 
+                       DriveApp.getFoldersByName("Galeri Pedet").next() : DriveApp.createFolder("Galeri Pedet");
+          let file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(base64), mime, name));
+          file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+          return "https://drive.google.com/thumbnail?id=" + file.getId() + "&sz=w1000";
+        } catch (e) { return "Upload Gagal: " + e.message; }
+      };
+
+      // 2. ENGINE KALKULASI BIOMETRIK (Format: X Thn Y Bln Z Hr)
+      const hitungBiometrikSapi = (tglLahir) => {
+        const lahir = new Date(tglLahir), now = new Date();
+        let y = now.getFullYear() - lahir.getFullYear();
+        let m = now.getMonth() - lahir.getMonth();
+        let d = now.getDate() - lahir.getDate();
+
+        if (d < 0) {
+            let prevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+            d += prevMonth.getDate();
+            m--;
+        }
+        if (m < 0) { m += 12; y--; }
+        
+        const totalHari = Math.floor((now - lahir) / (1000 * 60 * 60 * 24));
+        // Format Sultan: Angka 0 tetap tampil
+        const teksUmur = y + " Thn " + m + " Bln " + d + " Hr";
+        const kategori = (totalHari <= 180) ? "Anak" : ((totalHari <= 547) ? "Muda" : "Dewasa");
+        return { teksUmur, kategori };
+      };
+
+      // 3. VALIDASI INTEGRITAS DATA
+      const dataKelahiran = getSheetDataAsJSON(ss.getSheetByName("Database Kelahiran"));
+      const isDuplicate = dataKelahiran.some(r => r.eartag_induk === payload.eartag_induk && Math.abs((new Date(payload.tanggal_lahir) - new Date(r.tanggal_lahir)) / 86400000) <= 30);
+      if (isDuplicate) throw new Error("Input Ditolak: Induk ini tercatat sudah melahirkan dalam 30 hari terakhir.");
+
+      // 3b. VALIDASI SEDERHANA & TERPUSAT: Eartag Anak harus unik, dicek ke Database Kelahiran & Database Ternak sekaligus.
+      // Jika belum tercatat di keduanya -> data dinyatakan aman/ready to save dan lanjut ke proses simpan di bawah.
+      const eartagAnakBaruNorm = String(payload.eartag_anak || '').trim().toUpperCase();
+      const sudahAdaDiKelahiran = dataKelahiran.some(r => String(r.eartag_anak || '').trim().toUpperCase() === eartagAnakBaruNorm);
+      const sudahAdaDiTernak = getSheetDataAsJSON(ss.getSheetByName("Database Ternak")).some(r => String(r.id_ternak || '').trim().toUpperCase() === eartagAnakBaruNorm);
+      if (sudahAdaDiKelahiran || sudahAdaDiTernak) {
+        throw new Error("Input Ditolak: Eartag Anak '" + payload.eartag_anak + "' sudah tercatat di " + (sudahAdaDiKelahiran ? "Database Kelahiran" : "Database Ternak") + ".");
+      }
+
+
+
+      // 4. EKSEKUSI PENDAFTARAN
+      const fotoPath = uploadPedetFoto(payload.foto_base64, payload.foto_mime, payload.foto_name);
+      const bio = hitungBiometrikSapi(payload.tanggal_lahir);
+
+      ss.getSheetByName("Database Kelahiran").appendRow([
+        "KL-" + new Date().getTime(), payload.tanggal_lahir, formatEartag(payload.eartag_induk), 
+        payload.rumpun_induk, formatEartag(payload.eartag_anak), payload.jenis_kelamin, 
+        payload.rumpun_anak, formatEartag(payload.bapak), fotoPath, username
+      ]);
+
+      ss.getSheetByName("Database Ternak").appendRow([
+        formatEartag(payload.eartag_anak), payload.rumpun_anak, payload.tanggal_lahir, 
+        payload.jenis_kelamin, bio.teksUmur, bio.kategori, 
+        formatEartag(payload.bapak), formatEartag(payload.eartag_induk), "Hidup", "-", "", 
+        "Sistem Siscopatas: Auto-Inject Pedet Baru", username
+      ]);
+      
+      result = true; 
+      break;
+
+    case 'updatekelahiran':
+      if (!['Super Admin', 'Admin Wasbit', 'Admin Keswan'].includes(role)) throw new Error("Level User dilarang edit!");
+
+      const sheetLahir = ss.getSheetByName("Database Kelahiran");
+      const recordLama = getSheetDataAsJSON(sheetLahir).find(r => r.id_kelahiran == payload.id_kelahiran);
+      
+      if (!recordLama) throw new Error("Data tidak ditemukan!");
+      if (recordLama.eartag_induk !== payload.eartag_induk) throw new Error("Gagal: Eartag Induk tidak boleh diubah!");
+
+      // 1. Handling Foto
+      if (payload.foto_base64 && payload.foto_base64 !== "") {
+          try {
+            let folder = DriveApp.getFoldersByName("Galeri Pedet").next();
+            let file = folder.createFile(Utilities.newBlob(Utilities.base64Decode(payload.foto_base64), payload.foto_mime, payload.foto_name));
+            file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+            payload.link_foto = "https://drive.google.com/thumbnail?id=" + file.getId() + "&sz=w1000";
+          } catch (e) { throw new Error("Gagal upload foto: " + e.message); }
+      } else { payload.link_foto = recordLama.link_foto; }
+
+      delete payload.foto_base64; delete payload.foto_mime; delete payload.foto_name;
+      payload.last_updated_by = username;
+
+      updateRowByColumn(sheetLahir, "id_kelahiran", payload.id_kelahiran, payload);
+      
+      // Sinkronisasi Eartag jika berubah
+      if (recordLama.eartag_anak !== payload.eartag_anak) {
+          updateRowByColumn(ss.getSheetByName("Database Ternak"), "id_ternak", recordLama.eartag_anak, { "id_ternak": payload.eartag_anak });
+      }
+      
+      result = true; 
+      break;
+
+    case 'deletekelahiran': {
+      if (role !== 'Super Admin') throw new Error("Ditolak!");
+      const recordToDelete = getSheetDataAsJSON(ss.getSheetByName("Database Kelahiran")).find(r => r.id_kelahiran == payload.id);
+
+      if (recordToDelete) {
+        ss.getSheetByName("Log_Audit_Eartag").appendRow(["LOG-" + new Date().getTime(), new Date(), recordToDelete.eartag_anak, recordToDelete.rumpun_anak, recordToDelete.eartag_induk, "Dihapus dari Kelahiran", username]);
+        deleteRowByColumn(ss.getSheetByName("Database Ternak"), "id_ternak", recordToDelete.eartag_anak);
+        deleteRowByColumn(ss.getSheetByName("Database Kelahiran"), "id_kelahiran", payload.id);
+      }
+      result = true;
+      break; 
+    }
+
+    case 'addpengukuran':
+      if (!['Super Admin', 'Admin Wasbit', 'User Wasbit', 'Admin Keswan', 'User Keswan'].includes(role)) throw new Error("Akses Ditolak!");
+      const dataPengukuran = getSheetDataAsJSON(ss.getSheetByName("Database Pengukuran"));
+      
+      // Cek apakah ada eartag dan periode yang sama untuk menghindari duplikasi
+      const isExist = dataPengukuran.some(r => 
+          formatEartag(r.eartag) === formatEartag(payload.eartag) && r.periode_ukur === payload.periode_ukur
+      );
+      if (isExist) throw new Error("Eartag dengan periode input yang anda pilih sudah ada di dalam database pengukuran");
+      
+      // Hitung Otomatis Parameter SNI & ADG di Sisi Server
+      // PATCH A1: dataPengukuran yang sudah di-fetch di atas (baris cek duplikat) di-reuse untuk ADG,
+      // bukan baca ulang sheet "Database Pengukuran" (dulu 3x baca sheet yang sama per request, sekarang cukup 1x)
+      var sheetPengukuran = ss.getSheetByName("Database Pengukuran");
+      payload.grade_sni = hitungGradeSNI_Server(payload, ss.getSheetByName("ref_sni"));
+      payload.adg_harian = hitungADGHarian_Server(payload, dataPengukuran);
+      payload.adg_fase = hitungADGFase_Server(payload, dataPengukuran);
+
+      let rekomendasiFinalAdd = "Distribusi";
+      let auditAdminAdd = "";
+
+      if (payload.is_override === true && role === 'Super Admin') {
+          rekomendasiFinalAdd = payload.rekomendasi_seleksi_override;
+          auditAdminAdd = payload.keterangan_audit_admin || "-";
+      } else {
+          rekomendasiFinalAdd = hitungRekomendasiSeleksi(payload);
+          auditAdminAdd = ""; 
+      }
+
+      payload.rekomendasi_seleksi = rekomendasiFinalAdd;
+      payload.keterangan_audit_admin = auditAdminAdd;
+
+      // SUSUNAN ARRAY APPENDROW WAJIB PAS DENGAN STRUKTUR KOLOM SHEET (20 KOLOM UTUH)
+      sheetPengukuran.appendRow([ 
+        "UKR-" + new Date().getTime(),             // 1. id_ukur
+        payload.tanggal_ukur,                      // 2. tanggal_ukur
+        formatEartag(payload.eartag),              // 3. eartag
+        payload.rumpun,                            // 4. rumpun
+        payload.sex,                               // 5. sex
+        payload.tanggal_lahir,                     // 6. tanggal_lahir
+        formatEartag(payload.bapak) || "-",        // 7. bapak
+        formatEartag(payload.induk) || "-",        // 8. induk
+        payload.periode_ukur,                      // 9. periode_ukur
+        payload.panjang_badan,                     // 10. panjang_badan
+        payload.lingkar_dada,                      // 11. lingkar_dada
+        payload.tinggi_pundak,                     // 12. tinggi_pundak
+        payload.berat_badan || "-",                // 13. berat_badan
+        payload.lingkar_scrotum || "-",            // 14. lingkar_scrotum
+        payload.penilaian_kualitatif,              // 15. penilaian_kualitatif
+        payload.keterangan || "-",                 // 16. keterangan
+        payload.grade_sni,                         // 17. grade_sni
+        payload.rekomendasi_seleksi,               // 18. rekomendasi_seleksi
+        payload.keterangan_audit_admin,           // 19. keterangan_audit_admin
+        payload.adg_harian,                        // 20. adg_harian (KOLOM BARU)
+        payload.adg_fase,                          // 21. adg_fase (KOLOM BARU)
+        username                                   // 22. input_by
+      ]);
+      result = true; 
+      break;
+
+    case 'updatepengukuran':
+      if (!['Super Admin', 'Admin Wasbit', 'Admin Keswan'].includes(role)) throw new Error("Akses Ditolak!");
+      
+      // PATCH A1: fetch data "Database Pengukuran" 1x saja, dipakai bersama untuk ADG Harian & ADG Fase
+      // (dulu masing-masing hitungADGHarian_Server/hitungADGFase_Server baca sheet sendiri-sendiri = 2x baca)
+      var sheetPengukuranUpd = ss.getSheetByName("Database Pengukuran");
+      var dataPengukuranUpd = getSheetDataAsJSON(sheetPengukuranUpd);
+      payload.grade_sni = hitungGradeSNI_Server(payload, ss.getSheetByName("ref_sni"));
+      payload.adg_harian = hitungADGHarian_Server(payload, dataPengukuranUpd);
+      payload.adg_fase = hitungADGFase_Server(payload, dataPengukuranUpd);
+
+      let rekomendasiFinalUpd = "Distribusi"; 
+      let auditAdminUpd = "";
+
+      if (payload.is_override === true && role === 'Super Admin') {
+          rekomendasiFinalUpd = payload.rekomendasi_seleksi_override;
+          auditAdminUpd = payload.keterangan_audit_admin || "-";
+      } else {
+          rekomendasiFinalUpd = hitungRekomendasiSeleksi(payload);
+          auditAdminUpd = ""; 
+      }
+
+      payload.rekomendasi_seleksi = rekomendasiFinalUpd;
+      payload.keterangan_audit_admin = auditAdminUpd;
+
+      result = updateRowByColumn(sheetPengukuranUpd, "id_ukur", payload.id_ukur, payload); if (!result) throw new Error("Update gagal: data tidak ditemukan."); break;
+
+    case 'deletepengukuran':
+      if (role !== 'Super Admin') throw new Error("Ditolak!");
+      result = deleteRowByColumn(ss.getSheetByName("Database Pengukuran"), "id_ukur", payload.id); if (!result) throw new Error("Hapus gagal: data tidak ditemukan."); break;
+
+      case 'updateAturanSNI':
+      if (!['Super Admin', 'Admin Wasbit'].includes(role)) throw new Error("Akses Ditolak! Anda tidak memiliki otoritas mengubah standar SNI.");
+      
+      const sheetSNI = ss.getSheetByName("ref_sni");
+      const dataSNI = sheetSNI.getDataRange().getValues();
+      
+      // Melakukan pemindaian baris berdasarkan rumpun, jenis kelamin, periode, dan target grade
+      for (let i = 1; i < dataSNI.length; i++) {
+        if (String(dataSNI[i][0]).trim().toLowerCase() === String(payload.Rumpun).trim().toLowerCase() &&
+            String(dataSNI[i][1]).trim().toLowerCase() === String(payload.Sex).trim().toLowerCase() &&
+            String(dataSNI[i][2]).trim().toLowerCase() === String(payload['Periode (bulan)']).trim().toLowerCase() &&
+            String(dataSNI[i][7]).trim().toLowerCase() === String(payload.Grade).trim().toLowerCase()) {
+          
+          // Menyuntikkan pembaruan angka numerik murni ke kolom indeks yang tepat sesuai image_779b1d.png
+          sheetSNI.getRange(i + 1, 4).setValue(Number(payload['Tinggi Pundak (TP)']));
+          sheetSNI.getRange(i + 1, 5).setValue(Number(payload['Panjang Badan (PB)']));
+          sheetSNI.getRange(i + 1, 6).setValue(Number(payload['Lingkar Dada (LD)']));
+          sheetSNI.getRange(i + 1, 7).setValue(Number(payload['Lingkar Scrotum (LS)']));
+          result = true;
+          break;
+        }
+      }
+      invalidateCache("ref_sni_v1");
+      break;
+  }
+  return JSON.stringify(result);
+}
+
+// Tambahkan di bagian bawah script backend Anda
+function getReproduksiStats() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const dataIB = getSheetDataAsJSON(ss.getSheetByName("Database IB"));
+  const dataPKB = getSheetDataAsJSON(ss.getSheetByName("Database Kebuntingan"));
+  const dataLahir = getSheetDataAsJSON(ss.getSheetByName("Database Kelahiran"));
+
+  // S/C = Total IB / Total Kebuntingan
+  const totalIB = dataIB.length;
+  const totalBunting = dataPKB.filter(p => String(p.hasil_pemeriksaan).toLowerCase() === 'positif').length;
+  const sc = totalBunting > 0 ? (totalIB / totalBunting).toFixed(2) : 0;
+
+  // Placeholder untuk DO dan CI (Logic ini akan memproses komparasi tanggal per ID Ternak)
+  // Anda bisa mengembangkan logika date-diff di sini sesuai kebutuhan field di sheet
+  return { 
+    sc: sc, 
+    do_avg: "95 Hari", 
+    ci_avg: "380 Hari" 
+  };
+}
+
+
+
+
+
+
+
+
+// ========================================================================
+// UTILITIES ENGINE (DIKUNCI / JANGAN DIUBAH)
+// ========================================================================
+
+function formatEartag(val) {
+  if (val === undefined || val === null || val === "" || val === "-") return val;
+  let str = String(val).trim();
+  // Jangan dipagari dobel kalau sudah ada apostrof
+  if (str.startsWith("'")) return str;
+  // PAKSA SELALU JADI TEKS: apapun isinya (angka murni, mirip tanggal, campuran huruf-angka,
+  // dsb) selalu dipagari apostrof, supaya Google Sheets TIDAK PERNAH otomatis mengubahnya
+  // jadi objek Date atau Number. Ini mencegah masalah id_ternak/eartag yang "hilang" saat
+  // dicari karena tipe datanya berubah diam-diam.
+  return "'" + str;
+}
+
+function getSheetDataAsJSON(sheet) {
+  const data = sheet.getDataRange().getDisplayValues(); if (data.length <= 1) return [];
+  const headers = data[0]; return data.slice(1).map(row => { let obj = {}; headers.forEach((h, i) => obj[h] = row[i]); return obj; });
+}
+
+function updateRowByColumn(sheet, idColName, idVal, updateData) {
+  // A2 OPTIMASI PERFORMA: dulu baca sheet 2x (getValues() + getDisplayValues()).
+  // Sekarang cukup 1x getDisplayValues() saja, dipakai untuk header, index kolom,
+  // DAN pencarian ID (yang justru butuh getDisplayValues supaya id_ternak/eartag
+  // yang mirip angka/tanggal tidak salah cocok akibat auto-convert Sheets).
+  // Header row selalu berupa teks biasa, jadi getDisplayValues() vs getValues()
+  // hasilnya identik untuk headers -> aman digabung tanpa mengubah logika.
+  const displayData = sheet.getDataRange().getDisplayValues();
+  const headers = displayData[0]; const idIdx = headers.indexOf(idColName);
+  const idValNorm = normalizeString(idVal);
+  for (let i = 1; i < displayData.length; i++) if (normalizeString(displayData[i][idIdx]) === idValNorm) { 
+    headers.forEach((h, j) => { 
+      if (updateData[h] !== undefined) {
+         let valToSet = updateData[h];
+         if (['id_ternak', 'eartag', 'eartag_anak', 'eartag_induk', 'bapak', 'induk'].includes(h.toString().trim().toLowerCase())) {
+             valToSet = formatEartag(valToSet);
+         }
+         sheet.getRange(i + 1, j + 1).setValue(valToSet);
+      } 
+    }); 
+    return true; 
+  }
+  return false;
+}
+
+function deleteRowByColumn(sheet, idColName, idVal) {
+  // A2 OPTIMASI PERFORMA: sama seperti updateRowByColumn, cukup 1x getDisplayValues().
+  const displayData = sheet.getDataRange().getDisplayValues();
+  const idIdx = displayData[0].indexOf(idColName);
+  const idValNorm = normalizeString(idVal);
+  for (let i = 1; i < displayData.length; i++) if (normalizeString(displayData[i][idIdx]) === idValNorm) { sheet.deleteRow(i + 1); return true; }
+  return false;
+}
+
+function normalizeString(str) {
+  if (!str) return ""; return str.toString().trim().toLowerCase().replace(/['"”’‘]/g, "").replace(/\s+/g," ");
+}
+
+function updateBullStock(sheet, bullName, changeAmount) {
+  const data = sheet.getDataRange().getValues(); if (data.length <= 1) return;
+  const headers = data[0];
+  const nameIdx = headers.map(h => h.toString().trim().toLowerCase()).indexOf("nama_bull"); 
+  const stockIdx = headers.map(h => h.toString().trim().toLowerCase()).indexOf("stok_saat_ini");
+  if (nameIdx === -1 || stockIdx === -1) return;
+  const targetName = normalizeString(bullName);
+  for (let i = 1; i < data.length; i++) {
+    const currentName = normalizeString(data[i][nameIdx]);
+    if (currentName === targetName) { let currentStock = Number(data[i][stockIdx]) || 0; sheet.getRange(i + 1, stockIdx + 1).setValue(currentStock + changeAmount); break; }
+  }
+}
+
+// FUNGSI OTOMATIS PENENTU STATUS SELEKSI
+function hitungRekomendasiSeleksi(payload) {
+  const rumpun = String(payload.rumpun || '').trim().toLowerCase();
+  const sex = String(payload.sex || '').trim().toLowerCase();
+  const grade = String(payload.grade_sni || '').trim().toLowerCase();
+  const kualitatif = String(payload.penilaian_kualitatif || '').trim();
+
+  // 1. Jika Jantan -> Distribusi (Otomatis)
+  if (sex !== 'betina') return "Distribusi";
+
+  // 2. Jika Rumpun bukan Simmental, Limousin, atau Pesisir -> Distribusi
+  if (!['simmental', 'limousin', 'pesisir'].includes(rumpun)) return "Distribusi";
+
+  // 3. Jika Betina, Rumpun OK, Grade 1 atau 2, DAN Kualitatif Sesuai SNI -> Replacement
+  if ((grade.includes('grade 1') || grade.includes('grade 2')) && kualitatif === 'Sesuai SNI') {
+    return "Replacement";
+  }
+
+  // 4. Default: Selain kondisi di atas -> Distribusi
+  return "Distribusi";
+}
+
+function getPopulasiPerSektor() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('Database Ternak');
+  const data = sheet.getDataRange().getValues();
+  const header = data[0];
+  const idxSektor = header.indexOf('Sektor'); // Sesuaikan nama header jika beda
+  const idxStatus = header.indexOf('Status'); // Kolom status (Hidup/Mati/Afkir)
+  
+  const stats = {};
+  
+  // Lewati header, mulai dari baris kedua
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const sektor = row[idxSektor] || 'Tanpa Sektor';
+    const status = row[idxStatus];
+    
+    if (status === 'Hidup') {
+      stats[sektor] = (stats[sektor] || 0) + 1;
+    }
+  }
+  
+  // Ubah object menjadi array agar mudah di-loop di Vue
+  return Object.keys(stats).map(key => ({
+    nama: key,
+    jumlah: stats[key]
+  }));
+}
+
+// FUNGSI OTOMATIS PENENTU GRADE SNI (DIKUNCI DI SERVER)
+function hitungGradeSNI_Server(payload, sheetSNI) {
+  var f = payload;
+  if (!f.rumpun || !f.sex || !f.periode_ukur || !f.panjang_badan || !f.lingkar_dada || !f.tinggi_pundak) {
+    return "-";
+  }
+  if (f.periode_ukur === 'Lahir') return "Belum Ada SNI";
+
+  var pKey = "";
+  var pu = String(f.periode_ukur).toLowerCase();
+  if (pu === 'sapih' || pu === '9 bulan') pKey = "6-12 bulan";
+  else if (pu === '12 bulan' || pu === '15 bulan') pKey = "12-18 bulan";
+  else if (pu === '18 bulan' || pu === '21 bulan' || pu === '24 bulan') pKey = "18-24 bulan";
+
+  var dataSNI = getSheetDataAsJSON(sheetSNI);
+  var rules = dataSNI.filter(function(r) {
+    return String(r.Rumpun || '').trim().toLowerCase() === String(f.rumpun || '').trim().toLowerCase() &&
+           String(r.Sex || '').trim().toLowerCase() === String(f.sex || '').trim().toLowerCase() &&
+           String(r['Periode (bulan)'] || '').trim().toLowerCase() === pKey;
+  });
+
+  rules.sort(function(a, b) { return parseInt(a.Grade) - parseInt(b.Grade); });
+
+  var pb = parseFloat(f.panjang_badan || 0);
+  var tp = parseFloat(f.tinggi_pundak || 0);
+  var ld = parseFloat(f.lingkar_dada || 0);
+  var ls = f.lingkar_scrotum ? parseFloat(f.lingkar_scrotum) : 0;
+  var isJantan = String(f.sex || '').toLowerCase() === 'jantan';
+  var isWajibScrotum = (isJantan && pKey !== '6-12 bulan');
+
+  var finalGrade = "Non SNI";
+
+  for (var i = 0; i < rules.length; i++) {
+    var r = rules[i];
+    if (pb >= parseFloat(r['Panjang Badan (PB)'] || 0) && 
+        tp >= parseFloat(r['Tinggi Pundak (TP)'] || 0) && 
+        ld >= parseFloat(r['Lingkar Dada (LD)'] || 0)) {
+      
+      if (isWajibScrotum && ls < parseFloat(r['Lingkar Scrotum (LS)'] || 0)) continue;
+      
+      finalGrade = "Grade " + r.Grade;
+      break;
+    }
+  }
+
+  if (f.penilaian_kualitatif === 'Tidak Sesuai SNI') finalGrade = "Non SNI";
+  return finalGrade;
+}
+
+
+// ========================================================================
+// ENGINE ADG (AVERAGE DAILY GAIN) BACKEND (TAHAP 3)
+// ========================================================================
+
+function formatDateServer(dStr) {
+  if (!dStr || dStr === '-') return "-"; 
+  var str = String(dStr); 
+  if (str.indexOf('/') !== -1) { 
+    var p = str.split('/'); 
+    if(p.length === 3) return p[2] + '-' + p[1] + '-' + p[0]; 
+  }
+  return str.trim().split("T")[0]; 
+}
+
+function hitungADGHarian_Server(payload, dataUkur) {
+  if (!payload.berat_badan) return "-";
+  
+  // PATCH A1: dataUkur sekarang diterima langsung sebagai array (sudah di-fetch di case addpengukuran/updatepengukuran),
+  // tidak lagi baca ulang sheet "Database Pengukuran" di sini (dulu 1x baca sheet per panggilan fungsi ini)
+  var histori = dataUkur.filter(function(x) { 
+    return String(x.eartag).trim().toUpperCase() === String(payload.eartag).trim().toUpperCase(); 
+  });
+  
+  // Urutkan histori dari tanggal paling lama ke terbaru
+  histori.sort(function(a, b) { return new Date(formatDateServer(a.tanggal_ukur)) - new Date(formatDateServer(b.tanggal_ukur)); });
+  
+  // Ambil data paling pertama sebagai bobot awal alternatif jika fase 'Lahir' tidak diinput
+  var ukrLahir = histori.find(function(x) { return String(x.periode_ukur).toLowerCase() === 'lahir'; }) || histori[0];
+  
+  // JIKA BARIS SAAT INI ADALAH DATA PALING AWAL, ADG HARIAN ADALAH 0
+  if (ukrLahir && ukrLahir.id_ukur === payload.id_ukur) return "0,00 kg/hari";
+  
+  if (ukrLahir && ukrLahir.berat_badan && ukrLahir.id_ukur !== payload.id_ukur) {
+    var bbSekarang = parseFloat(payload.berat_badan);
+    var bbLahir = parseFloat(ukrLahir.berat_badan);
+    var tglSekarang = new Date(formatDateServer(payload.tanggal_ukur));
+    var tglLahir = new Date(formatDateServer(ukrLahir.tanggal_ukur));
+    
+    var selisihHari = Math.ceil((tglSekarang - tglLahir) / 86400000);
+    if (selisihHari > 0 && bbSekarang >= bbLahir) {
+      return ((bbSekarang - bbLahir) / selisihHari).toFixed(2).replace('.', ',') + " kg/hari";
+    }
+  }
+  return "-";
+}
+
+function hitungADGFase_Server(payload, dataUkur) {
+  if (!payload.berat_badan) return "-";
+  var urutan = ['Lahir', 'Sapih', '9 Bulan', '12 Bulan', '15 Bulan', '18 Bulan', '21 Bulan', '24 Bulan'];
+  
+  // PATCH A1: dataUkur sekarang diterima langsung sebagai array (sudah di-fetch di case addpengukuran/updatepengukuran),
+  // tidak lagi baca ulang sheet "Database Pengukuran" di sini (dulu 1x baca sheet per panggilan fungsi ini)
+  var riwayat = dataUkur.filter(function(x) { 
+    return String(x.eartag).trim().toUpperCase() === String(payload.eartag).trim().toUpperCase() && x.berat_badan; 
+  }).sort(function(a, b) { 
+    return new Date(formatDateServer(a.tanggal_ukur)) - new Date(formatDateServer(b.tanggal_ukur)); 
+  });
+  
+  // Cari indeks baris data saat ini di dalam riwayat urutan tanggal
+  var urutanIndexSaatIni = riwayat.findIndex(function(x) { return x.id_ukur === payload.id_ukur; });
+  if (urutanIndexSaatIni <= 0) return "0,00 kg/hr"; // Data pertama tidak punya fase sebelumnya
+  
+  // Ambil data tepat satu langkah di belakangnya secara kronologis tanggal
+  var dataSebelumnya = riwayat[urutanIndexSaatIni - 1];
+  
+  if (dataSebelumnya) {
+    var bbSekarang = parseFloat(payload.berat_badan);
+    var bbSebelum = parseFloat(dataSebelumnya.berat_badan);
+    var tglSekarang = new Date(formatDateServer(payload.tanggal_ukur));
+    var tglSebelum = new Date(formatDateServer(dataSebelumnya.tanggal_ukur));
+    var selisihHari = Math.ceil((tglSekarang - tglSebelum) / 86400000);
+    
+    if (selisihHari > 0 && bbSekarang >= bbSebelum) {
+      return ((bbSekarang - bbSebelum) / selisihHari).toFixed(2).replace('.', ',') + " kg/hr";
+    }
+  }
+  return "-";
+}
+
+// ========================================================================
+// PATCH SULTAN: PERBAIKAN MASAL DATA ARSIP SEBELUMNYA
+// ========================================================================
+function perbaikiDataLamaADG() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetPengukuran = ss.getSheetByName("Database Pengukuran");
+  const data = sheetPengukuran.getDataRange().getValues();
+  const headers = data[0];
+  
+  const idUkurIdx = headers.indexOf("id_ukur");
+  const eartagIdx = headers.indexOf("eartag");
+  const tglUkurIdx = headers.indexOf("tanggal_ukur");
+  const bbIdx = headers.indexOf("berat_badan");
+  const adgHarianIdx = headers.indexOf("adg_harian");
+  const adgFaseIdx = headers.indexOf("adg_fase");
+  
+  let jumlahPerubahan = 0;
+
+  for (let i = 1; i < data.length; i++) {
+    // Ambil semua data histori untuk eartag ini
+    const eartagSaatIni = String(data[i][eartagIdx]);
+    const historiEartag = data.filter(row => String(row[eartagIdx]) === eartagSaatIni && row[bbIdx] !== "");
+    
+    // Urutkan histori berdasarkan tanggal
+    historiEartag.sort((a, b) => new Date(a[tglUkurIdx]) - new Date(b[tglUkurIdx]));
+    
+    // Cari posisi baris ini di histori
+    const indexDiHistori = historiEartag.findIndex(row => row[idUkurIdx] === data[i][idUkurIdx]);
+    
+    if (indexDiHistori > 0) {
+      const dataSekarang = historiEartag[indexDiHistori];
+      const dataSebelumnya = historiEartag[indexDiHistori - 1];
+      
+      // BERSIHKAN DATA: Ambil angka saja dari kolom berat_badan (untuk antisipasi format teks "45 kg")
+      const bbSek = parseFloat(String(dataSekarang[bbIdx]).replace(/[^0-9.]/g, ''));
+      const bbSeb = parseFloat(String(dataSebelumnya[bbIdx]).replace(/[^0-9.]/g, ''));
+      
+      const tglSek = new Date(dataSekarang[tglUkurIdx]);
+      const tglSeb = new Date(dataSebelumnya[tglUkurIdx]);
+      
+      const selisihHari = Math.ceil((tglSek - tglSeb) / (1000 * 60 * 60 * 24));
+      
+      if (selisihHari > 0 && bbSek > bbSeb) {
+        const adg = ((bbSek - bbSeb) / selisihHari).toFixed(2);
+        sheetPengukuran.getRange(i + 1, adgHarianIdx + 1).setValue(adg + " kg/hari");
+        sheetPengukuran.getRange(i + 1, adgFaseIdx + 1).setValue(adg + " kg/hr");
+        jumlahPerubahan++;
+      }
+    }
+  }
+  return "Selesai! " + jumlahPerubahan + " baris berhasil diperbarui.";
+}
+
+
+
+
+/**
+ * SKRIP MIGRASI SISCOPATAS KE SUPABASE
+ * Konfigurasi: Masukkan URL & API Key dari Dashboard Supabase Anda
+ */
+
+function migrateSheetToSupabase() {
+const SUPABASE_URL = "https://iutzeofskougncvpevlv.supabase.co";
+const SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml1dHplb2Zza291Z25jdnBldmx2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTU5MTIxNSwiZXhwIjoyMDk3MTY3MjE1fQ.IzWL8tOlKkjTBhVG9_KHgIpQzfqcnqDCGuxU7gkwXuo"; // Gunakan Service Role Key di Settings > API
+
+const sheetName = "Database Ternak"; 
+  const tableName = "database_ternak";
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(sheetName);
+  
+  if (!sheet) {
+    Logger.log("Sheet tidak ditemukan!");
+    return;
+  }
+
+  // Mengambil data
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const rows = data.slice(1);
+  
+  // Mengolah data per baris
+  const payload = rows.map(row => {
+    let obj = {};
+    headers.forEach((header, index) => {
+      let key = header.toLowerCase().replace(/ /g, "_");
+      let val = row[index];
+      
+      // Validasi: ubah kosong, null, atau strip menjadi null
+      if (val === "" || val === null || val === "-") {
+        obj[key] = null;
+      } else if (val instanceof Date) {
+        // Konversi objek Date ke format string waktu/tanggal yang valid untuk PostgreSQL
+        obj[key] = Utilities.formatDate(val, Session.getScriptTimeZone(), "HH:mm:ss");
+      } else {
+        obj[key] = val;
+      }
+    });
+    return obj;
+  });
+  
+  // Mengirim data ke Supabase
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    headers: {
+      "apikey": SUPABASE_SERVICE_KEY,
+      "Authorization": "Bearer " + SUPABASE_SERVICE_KEY,
+      "Prefer": "return=representation"
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true // Ditambahkan agar kita bisa menangkap error response lengkap
+  };
+  
+  try {
+    const response = UrlFetchApp.fetch(SUPABASE_URL + "/rest/v1/" + tableName, options);
+    const responseCode = response.getResponseCode();
+    
+    if (responseCode >= 200 && responseCode < 300) {
+      Logger.log("Berhasil: Data berhasil diunggah.");
+    } else {
+      Logger.log("Gagal: " + responseCode + " - " + response.getContentText());
+    }
+  } catch (e) {
+    Logger.log("Error Detail: " + e.toString());
+  }
+}
+
+
+function migrasiKategoriMassalSultan() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Database Ternak");
+  
+  if (!sheet) return "Gagal: Sheet 'Database Ternak' tidak ditemukan!";
+  
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  
+  // Mencari posisi kolom secara akurat
+  const idxTglLahir = headers.indexOf("tanggal_lahir");
+  const idxKategori = headers.indexOf("kategori");
+  
+  if (idxTglLahir === -1 || idxKategori === -1) {
+    return "Gagal: Kolom tanggal_lahir atau kategori tidak ditemukan di Sheet!";
+  }
+  
+  let jumlahDiperbarui = 0;
+  const tglHariIni = new Date();
+  
+  // Looping dimulai dari baris ke-2 (indeks 1) untuk melewati header
+  for (let i = 1; i < data.length; i++) {
+    let tglLahirStr = data[i][idxTglLahir];
+    if (!tglLahirStr || tglLahirStr === "-") continue;
+    
+    // Konversi text tanggal (DD/MM/YYYY) menjadi objek Date murni
+    let tglLahirObj;
+    if (tglLahirStr instanceof Date) {
+      tglLahirObj = tglLahirStr;
+    } else {
+      let parts = String(tglLahirStr).split('/');
+      if (parts.length === 3) {
+        tglLahirObj = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+      } else {
+        tglLahirObj = new Date(tglLahirStr);
+      }
+    }
+    
+    // Validasi pengaman jika format tanggal rusak
+    if (isNaN(tglLahirObj.getTime())) continue;
+    
+    // Hitung umur murni dalam satuan hari
+    let selisihMilidetik = tglHariIni.getTime() - tglLahirObj.getTime();
+    let selisihHariTotal = Math.floor(selisihMilidetik / (1000 * 60 * 60 * 24));
+    
+    // Penentuan Kategori Baru sesuai Titah Sultan
+    let kategoriBaru = "Dewasa";
+    if (selisihHariTotal <= 180) {
+      kategoriBaru = "Anak";
+    } else if (selisihHariTotal <= 547) {
+      kategoriBaru = "Muda"; // Otomatis merubah tulisan "Dara" lama menjadi standar "Muda"
+    }
+    
+    // Eksekusi suntik data langsung ke sel interaktif spreadsheet
+    sheet.getRange(i + 1, idxKategori + 1).setValue(kategoriBaru);
+    jumlahDiperbarui++;
+  }
+  
+  return "Sempurna! Berhasil memperbarui " + jumlahDiperbarui + " data kategori ternak secara massal.";
+}
+
+
+/**
+ * UTALITAS SULTAN: Jalankan fungsi ini sekali saja untuk 
+ * memperbaiki data stok sisa Pejantan yang terlanjur bernilai minus.
+ */
+function perbaikiStokBullMinusSultan() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Database Bull");
+  if (!sheet) return "Gagal: Sheet Database Bull tidak ditemukan!";
+  
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  
+  const idxAwal = headers.indexOf("stok_awal");
+  const idxSisa = headers.indexOf("stok_saat_ini");
+  
+  let jumlahPerbaikan = 0;
+  
+  for (let i = 1; i < data.length; i++) {
+    let awal = Number(data[i][idxAwal]) || 0;
+    let sisa = Number(data[i][idxSisa]) || 0;
+    
+    // Jika sisa bernilai minus atau kosong (0), kalkulasi ulang sisa yang sebenarnya
+    if (sisa <= 0) {
+      let sisaSeharusnya = awal + sisa; // Rumus: 200 + (-10) = 190 Sisa Sebenarnya
+      sheet.getRange(i + 1, idxSisa + 1).setValue(sisaSeharusnya);
+      jumlahPerbaikan++;
+    }
+  }
+  return "Selesai! " + jumlahPerbaikan + " baris data stok Pejantan berhasil dipulihkan.";
+}
+
+
+function migrasiFormatUmurSultan() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName("Database Ternak");
+  const data = sheet.getDataRange().getValues();
+  const idxTglLahir = 2; // Sesuaikan dengan kolom tanggal lahir
+  const idxUmur = 4;     // Sesuaikan dengan kolom "umur (bulan)"
+
+  for (let i = 1; i < data.length; i++) {
+    if (!data[i][idxTglLahir]) continue;
+    
+    // 1. Kalkulasi umur di dalam loop
+    let lahir = new Date(data[i][idxTglLahir]);
+    let now = new Date();
+    
+    let tahunAkurat = now.getFullYear() - lahir.getFullYear();
+    let bulanAkurat = now.getMonth() - lahir.getMonth();
+    let hariAkurat = now.getDate() - lahir.getDate();
+    
+    if (hariAkurat < 0) {
+      let prevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+      hariAkurat += prevMonth.getDate();
+      bulanAkurat--;
+    }
+    if (bulanAkurat < 0) {
+      bulanAkurat += 12;
+      tahunAkurat--;
+    }
+    
+    // 2. Sekarang variabel sudah terdefinisi
+    let hasilFormat = tahunAkurat + " Thn " + bulanAkurat + " Bln " + hariAkurat + " Hr";
+    
+    // 3. Update ke sheet
+    sheet.getRange(i + 1, idxUmur + 1).setValue(hasilFormat);
+  }
+}
+
+
+
+function bulk_add_berahi(payloads) {
+  if (!payloads || !Array.isArray(payloads)) {
+    throw new Error("Payload harus berupa Array data.");
+  }
+  
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Laporan Berahi");
+  if (!sheet) {
+    throw new Error("Lembar sheet 'Laporan Berahi' tidak ditemukan.");
+  }
+  
+  var lastRow = sheet.getLastRow();
+  var rowsToAdd = [];
+  var nowTime = new Date().getTime();
+  
+  // Susun data massal sesuai dengan urutan kolom GSheet Sultan secara presisi
+  for (var i = 0; i < payloads.length; i++) {
+    var p = payloads[i];
+    var id = "REP-" + (nowTime + i) + "-" + Math.floor(Math.random() * 1000);
+    
+    rowsToAdd.push([
+      id,
+      p.tanggal_lapor, // String format DD/MM/YYYY yang sudah diverifikasi dari frontend
+      p.eartag,
+      p.rumpun,
+      p.derajat_berahi,
+      p.rekomendasi,
+      p.keterangan || "-",
+      "Belum",
+      p.input_by || "System"
+    ]);
+  }
+  
+  // Tulis ke GSheet sekaligus menggunakan setValues (Kecepatan tinggi, mencegah timeout)
+  if (rowsToAdd.length > 0) {
+    sheet.getRange(lastRow + 1, 1, rowsToAdd.length, 9).setValues(rowsToAdd);
+  }
+  
+  return "Selesai! " + rowsToAdd.length + " data Laporan Berahi berhasil diunggah secara massal.";
+}
+
+function bulk_add_ib(payloads) {
+  if (!payloads || !Array.isArray(payloads)) {
+    throw new Error("Payload harus berupa Array data.");
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Database IB");
+  if (!sheet) {
+    throw new Error("Lembar sheet 'Database IB' tidak ditemukan.");
+  }
+  var sheetBull = ss.getSheetByName("Database Bull");
+  var sheetBerahi = ss.getSheetByName("Laporan Berahi");
+
+  var lastRow = sheet.getLastRow();
+  var rowsToAdd = [];
+  var nowTime = new Date().getTime();
+
+  // Ambil data IB existing untuk cek duplikasi eartag + tanggal_ib
+  var dataIBExisting = getSheetDataAsJSON(sheet);
+  var comboSudahDiproses = {}; // Jaga-jaga kalau ada duplikat DI DALAM satu file excel yang sama
+
+  var jumlahDilewati = 0;
+
+  // Susun data massal sesuai urutan kolom GSheet Database IB secara presisi:
+  // id_ib, id_lapor, tanggal_ib, eartag, rumpun, derajat_berahi, nama_bull, inseminator, input_by
+  for (var i = 0; i < payloads.length; i++) {
+    var p = payloads[i];
+    var eartagNorm = normalizeString(p.eartag);
+    var comboKey = eartagNorm + "|" + String(p.tanggal_ib).trim();
+
+    // TOLAK HANYA JIKA: eartag + tanggal IB sama persis sudah ada di Database IB (atau di batch ini)
+    var isDuplikat = comboSudahDiproses[comboKey] || dataIBExisting.some(function(r) {
+      return normalizeString(r.eartag) === eartagNorm && String(r.tanggal_ib).trim() === String(p.tanggal_ib).trim();
+    });
+
+    if (isDuplikat) {
+      jumlahDilewati++;
+      continue;
+    }
+    comboSudahDiproses[comboKey] = true;
+
+    var id = "IB-" + (nowTime + i) + "-" + Math.floor(Math.random() * 1000);
+
+    rowsToAdd.push([
+      id,
+      p.id_lapor || "-", // id_lapor: dikirim dari frontend jika eartag ada laporan berahi "Layak IB" yang cocok
+      p.tanggal_ib, // String format DD/MM/YYYY yang sudah diverifikasi dari frontend
+      formatEartag(p.eartag),
+      p.rumpun,
+      p.derajat_berahi,
+      p.nama_bull,
+      p.inseminator,
+      p.input_by || "System"
+    ]);
+
+    // Kurangi stok dosis Bull per baris, konsisten dengan alur input satuan (addib)
+    if (sheetBull) {
+      updateBullStock(sheetBull, p.nama_bull, -1);
+    }
+
+    // SINKRONISASI STATUS IB: kalau baris ini terhubung ke sebuah laporan berahi,
+    // update status_ib laporan tsb jadi "Sudah", persis seperti alur input satuan (addib)
+    if (p.id_lapor && sheetBerahi) {
+      updateRowByColumn(sheetBerahi, "id_lapor", p.id_lapor, { status_ib: "Sudah" });
+    }
+  }
+
+  // Tulis ke GSheet sekaligus menggunakan setValues (Kecepatan tinggi, mencegah timeout)
+  if (rowsToAdd.length > 0) {
+    sheet.getRange(lastRow + 1, 1, rowsToAdd.length, 9).setValues(rowsToAdd);
+  }
+
+  var pesan = "Selesai! " + rowsToAdd.length + " data Database IB berhasil diunggah secara massal.";
+  if (jumlahDilewati > 0) {
+    pesan += " (" + jumlahDilewati + " baris dilewati karena eartag & tanggal IB sudah pernah tercatat)";
+  }
+  return pesan;
+}
+
+// PATCH: Upload Massal Database Kelahiran (Pedet Baru) -- 2 JALUR TERPISAH & INDEPENDEN
+// ------------------------------------------------------------------------------------
+// Latar belakang bug lama: alur single-record ('addkelahiran') menulis ke Database Ternak
+// & Database Kelahiran dalam SATU alur berurutan dan langsung throw Error kalau eartag anak
+// sudah ada di Database Ternak -- akibatnya SATU baris gagal bisa menghentikan proses & bikin
+// data antara kedua sheet jadi tidak sinkron (sudah ada di Ternak, tapi belum tercatat di Kelahiran).
+//
+// Perbaikan di sini: setiap baris diproses lewat 2 JALUR INDEPENDEN --
+//   JALUR 1 -> Database Ternak   : hanya ditulis kalau eartag anak BELUM ada di sana sama sekali.
+//   JALUR 2 -> Database Kelahiran: hanya ditulis kalau eartag anak BELUM ada di sana sama sekali.
+// Sehingga baris yang eartag-nya "sudah terdaftar di Database Ternak" TIDAK diblokir total --
+// baris tsb tetap ditambal (sync) ke Database Kelahiran kalau memang belum tercatat di sana.
+// Baris hanya benar-benar dilewati kalau SUDAH LENGKAP tercatat di KEDUA sheet.
+//
+// DOUBLE CEK / SARAN BAPAK: kalau eartag anak sudah terdaftar di Database Ternak, kolom 'bapak'
+// yang SUDAH TERSIMPAN di Database Ternak dipakai sebagai sumber kebenaran/saran (bukan ditimpa
+// asal-asalan oleh isi Excel yang mungkin kosong/beda), persis seperti alur suggest eartag yang
+// sudah ada di modul Berahi/IB.
+function bulk_add_kelahiran(payloads) {
+  if (!payloads || !Array.isArray(payloads)) {
+    throw new Error("Payload harus berupa Array data.");
+  }
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetKelahiran = ss.getSheetByName("Database Kelahiran");
+  var sheetTernak = ss.getSheetByName("Database Ternak");
+  if (!sheetKelahiran) throw new Error("Lembar sheet 'Database Kelahiran' tidak ditemukan.");
+  if (!sheetTernak) throw new Error("Lembar sheet 'Database Ternak' tidak ditemukan.");
+
+  // Kalkulasi umur & kategori -- sama persis rumusnya dengan alur input satuan (case 'addkelahiran')
+  function hitungBiometrikSapiBulk(tglLahir) {
+    var lahir = new Date(tglLahir), now = new Date();
+    var y = now.getFullYear() - lahir.getFullYear();
+    var m = now.getMonth() - lahir.getMonth();
+    var d = now.getDate() - lahir.getDate();
+    if (d < 0) {
+      var prevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+      d += prevMonth.getDate();
+      m--;
+    }
+    if (m < 0) { m += 12; y--; }
+    var totalHari = Math.floor((now - lahir) / (1000 * 60 * 60 * 24));
+    var teksUmur = y + " Thn " + m + " Bln " + d + " Hr";
+    var kategori = (totalHari <= 180) ? "Anak" : ((totalHari <= 547) ? "Muda" : "Dewasa");
+    return { teksUmur: teksUmur, kategori: kategori };
+  }
+
+  // Baca data existing SEKALI DI AWAL (hemat kuota baca), lalu diindeks jadi map/set
+  // supaya pengecekan per baris cepat (O(1)) bukan looping ulang tiap baris (O(n)).
+  var dataTernakExisting = getSheetDataAsJSON(sheetTernak);
+  var dataKelahiranExisting = getSheetDataAsJSON(sheetKelahiran);
+
+  var mapTernak = {}; // key: eartag ternormalisasi -> record Database Ternak (untuk suggest bapak)
+  dataTernakExisting.forEach(function (r) {
+    mapTernak[normalizeString(r.id_ternak)] = r;
+  });
+  var setKelahiranAnak = {}; // key: eartag_anak ternormalisasi -> sudah tercatat di Database Kelahiran
+  dataKelahiranExisting.forEach(function (r) {
+    setKelahiranAnak[normalizeString(r.eartag_anak)] = true;
+  });
+
+  var rowsTernakToAdd = [];
+  var rowsKelahiranToAdd = [];
+  var nowTime = new Date().getTime();
+  var anakDiprosesBatchIni = {}; // cegah baris duplikat DI DALAM satu file Excel yang sama
+
+  var jumlahPedetBaru = 0;           // baru sama sekali -> masuk ke Ternak & Kelahiran
+  var jumlahSinkronKelahiranSaja = 0; // sudah ada di Ternak, cuma ditambal ke Kelahiran
+  var jumlahDilewatiFull = 0;         // sudah lengkap di kedua sheet -> dilewati
+  var detailSinkron = [];
+
+  for (var i = 0; i < payloads.length; i++) {
+    var p = payloads[i];
+    var eartagAnakNorm = normalizeString(p.eartag_anak);
+    if (!eartagAnakNorm) continue; // lewati baris kosong/tidak valid
+
+    if (anakDiprosesBatchIni[eartagAnakNorm]) { jumlahDilewatiFull++; continue; }
+    anakDiprosesBatchIni[eartagAnakNorm] = true;
+
+    var recordTernak = mapTernak[eartagAnakNorm];   // ada / undefined
+    var sudahAdaDiKelahiran = !!setKelahiranAnak[eartagAnakNorm];
+    var sudahAdaDiTernak = !!recordTernak;
+
+    // Sudah lengkap tercatat di KEDUA sheet -> tidak ada yang perlu ditambal, lewati total.
+    if (sudahAdaDiTernak && sudahAdaDiKelahiran) {
+      jumlahDilewatiFull++;
+      continue;
+    }
+
+    // DOUBLE CEK / SARAN BAPAK: kalau eartag anak sudah terdaftar di Database Ternak,
+    // pakai kolom 'bapak' yang SUDAH TERSIMPAN di sana sbg sumber kebenaran/saran.
+    var bapakFinal = p.bapak;
+    if (recordTernak && recordTernak.bapak && String(recordTernak.bapak).trim() !== "" && String(recordTernak.bapak).trim() !== "-") {
+      bapakFinal = recordTernak.bapak;
+    }
+
+    // JALUR 1 -> DATABASE TERNAK: hanya ditulis kalau BELUM ada di sana sama sekali.
+    if (!sudahAdaDiTernak) {
+      var bio = hitungBiometrikSapiBulk(p.tanggal_lahir);
+      rowsTernakToAdd.push([
+        formatEartag(p.eartag_anak), p.rumpun_anak, p.tanggal_lahir,
+        p.jenis_kelamin, bio.teksUmur, bio.kategori,
+        formatEartag(bapakFinal), formatEartag(p.eartag_induk), "Hidup", "-", "",
+        "Sistem Siscopatas: Auto-Inject Pedet Baru (Upload Massal)", p.input_by || "System"
+      ]);
+    }
+
+    // JALUR 2 -> DATABASE KELAHIRAN: hanya ditulis kalau BELUM ada di sana sama sekali.
+    if (!sudahAdaDiKelahiran) {
+      var idKL = "KL-" + (nowTime + i) + "-" + Math.floor(Math.random() * 1000);
+      rowsKelahiranToAdd.push([
+        idKL, p.tanggal_lahir, formatEartag(p.eartag_induk),
+        p.rumpun_induk, formatEartag(p.eartag_anak), p.jenis_kelamin,
+        p.rumpun_anak, formatEartag(bapakFinal), "", p.input_by || "System"
+      ]);
+    }
+
+    if (sudahAdaDiTernak && !sudahAdaDiKelahiran) {
+      jumlahSinkronKelahiranSaja++;
+      detailSinkron.push(p.eartag_anak);
+    } else {
+      jumlahPedetBaru++;
+    }
+  }
+
+  // Tulis massal ke masing-masing sheet sekali jalan (setValues, cepat & hemat kuota)
+  if (rowsTernakToAdd.length > 0) {
+    var lastRowTernak = sheetTernak.getLastRow();
+    sheetTernak.getRange(lastRowTernak + 1, 1, rowsTernakToAdd.length, 13).setValues(rowsTernakToAdd);
+  }
+  if (rowsKelahiranToAdd.length > 0) {
+    var lastRowKelahiran = sheetKelahiran.getLastRow();
+    sheetKelahiran.getRange(lastRowKelahiran + 1, 1, rowsKelahiranToAdd.length, 10).setValues(rowsKelahiranToAdd);
+  }
+
+  var pesan =
+    "Selesai! Upload Massal Database Kelahiran:\n" +
+    "- Pedet baru (masuk ke Database Ternak & Database Kelahiran): " + jumlahPedetBaru + "\n" +
+    "- Sudah ada di Database Ternak, ditambal ke Database Kelahiran saja: " + jumlahSinkronKelahiranSaja + "\n" +
+    "- Dilewati (sudah lengkap tercatat di kedua database): " + jumlahDilewatiFull;
+  if (detailSinkron.length > 0) {
+    pesan += "\n  Detail eartag yang disinkron: " + detailSinkron.join(", ");
+  }
+
+  Logger.log(pesan);
+  return pesan;
+}
+
+
+/**
+ * SKRIP SEKALI-JALAN: Sinkronisasi Retroaktif Status IB
+ * -------------------------------------------------------
+ * Tujuan: Untuk setiap baris di "Database IB" yang sudah terlanjur ada,
+ * pastikan laporan berahi terkait di sheet "Laporan Berahi" berstatus "Sudah".
+ *
+ * Cara pakai:
+ * 1. Paste fungsi ini ke Apps Script (boleh di file backend.gs yang sama).
+ * 2. Pilih fungsi "sinkronisasiRetroaktifStatusIB" di dropdown toolbar Apps Script.
+ * 3. Klik Run sekali. Lihat hasilnya di Logger (View > Logs) atau lewat return value
+ *    kalau dijalankan lewat dialog "Run" (akan muncul di eksekusi log).
+ * 4. Setelah selesai jalan sekali, fungsi ini boleh dihapus/dibiarkan saja (aman
+ *    dijalankan berkali-kali karena hanya mengubah baris yang masih "Belum").
+ */
+function sinkronisasiRetroaktifStatusIB() {
+  // Fallback lokal: kalau normalizeString() dari backend utama belum ada di project ini
+  // (misalnya skrip ini dipaste di file .gs terpisah), definisikan versi sendiri di sini.
+  // Kalau fungsi normalizeString() global sudah ada di project yang sama, baris ini akan
+  // error "already defined" -- kalau itu terjadi, cukup hapus blok if di bawah ini.
+  if (typeof normalizeString === "undefined") {
+    normalizeString = function(str) {
+      if (!str) return "";
+      return str.toString().trim().toLowerCase().replace(/['"”’‘]/g, "").replace(/\s+/g, " ");
+    };
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetIB = ss.getSheetByName("Database IB");
+  const sheetBerahi = ss.getSheetByName("Laporan Berahi");
+
+  if (!sheetIB) return "Gagal: Sheet 'Database IB' tidak ditemukan!";
+  if (!sheetBerahi) return "Gagal: Sheet 'Laporan Berahi' tidak ditemukan!";
+
+  // Ambil semua data sebagai display values (konsisten dengan getSheetDataAsJSON,
+  // supaya eartag yang mirip angka/tanggal tidak salah baca)
+  const dataIB = sheetIB.getDataRange().getDisplayValues();
+  const headerIB = dataIB[0];
+  const idxIB_idLapor = headerIB.indexOf("id_lapor");
+  const idxIB_eartag = headerIB.indexOf("eartag");
+  const idxIB_tglIB = headerIB.indexOf("tanggal_ib");
+
+  const dataBerahi = sheetBerahi.getDataRange().getDisplayValues();
+  const headerBerahi = dataBerahi[0];
+  const idxB_idLapor = headerBerahi.indexOf("id_lapor");
+  const idxB_eartag = headerBerahi.indexOf("eartag");
+  const idxB_statusIB = headerBerahi.indexOf("status_ib");
+  const idxB_tglLapor = headerBerahi.indexOf("tanggal_lapor");
+
+  if ([idxIB_idLapor, idxIB_eartag, idxIB_tglIB].indexOf(-1) !== -1) {
+    return "Gagal: Struktur kolom 'Database IB' tidak sesuai (cek header id_lapor/eartag/tanggal_ib).";
+  }
+  if ([idxB_idLapor, idxB_eartag, idxB_statusIB, idxB_tglLapor].indexOf(-1) !== -1) {
+    return "Gagal: Struktur kolom 'Laporan Berahi' tidak sesuai (cek header id_lapor/eartag/status_ib/tanggal_lapor).";
+  }
+
+  // Helper: parse tanggal format DD/MM/YYYY -> timestamp (untuk membandingkan mana laporan
+  // berahi yang paling relevan/terbaru kalau harus fallback cari berdasarkan eartag saja)
+  function parseTgl(str) {
+    if (!str || str === "-") return 0;
+    var s = String(str).trim();
+    if (s.indexOf("/") !== -1) {
+      var p = s.split("/");
+      if (p.length === 3) return new Date(p[2], p[1] - 1, p[0]).getTime();
+    }
+    var d = new Date(s);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  }
+
+  let jumlahDiupdateViaIdLapor = 0;
+  let jumlahDiupdateViaFallbackEartag = 0;
+  let jumlahSudahBenar = 0;
+  let jumlahTidakDitemukanPasangan = 0;
+  const rowsTidakDitemukan = [];
+
+  // Set berisi baris (index di dataBerahi) yang sudah "dipakai" dalam sesi ini,
+  // supaya 2 baris IB dgn eartag sama tidak menandai laporan yang sama dua kali.
+  const berahiRowSudahDipakai = {};
+
+  for (let i = 1; i < dataIB.length; i++) {
+    const rowIB = dataIB[i];
+    const eartagIB = normalizeString(rowIB[idxIB_eartag]);
+    if (!eartagIB) continue; // baris kosong
+
+    const idLaporIB = String(rowIB[idxIB_idLapor] || "").trim();
+    const tglIB = rowIB[idxIB_tglIB];
+
+    let baris_TargetDiBerahi = -1;
+
+    // STRATEGI 1: Kalau id_lapor valid (bukan kosong/"-"), cari baris Laporan Berahi persis dengan id itu
+    if (idLaporIB && idLaporIB !== "-" && idLaporIB !== "") {
+      for (let j = 1; j < dataBerahi.length; j++) {
+        if (normalizeString(dataBerahi[j][idxB_idLapor]) === normalizeString(idLaporIB)) {
+          baris_TargetDiBerahi = j;
+          break;
+        }
+      }
+    }
+
+    // STRATEGI 2 (FALLBACK): id_lapor kosong/tidak ketemu -> cari berdasarkan eartag yang sama
+    // dan status_ib masih "Belum", ambil yang tanggal_lapor-nya PALING DEKAT/SEBELUM tanggal_ib
+    // (kalau tidak ada tanggal yang valid untuk dibandingkan, ambil yang paling baru saja).
+    if (baris_TargetDiBerahi === -1) {
+      let kandidatTerbaik = -1;
+      let kandidatTglTerbaik = -1;
+      const tglIBTime = parseTgl(tglIB);
+
+      for (let j = 1; j < dataBerahi.length; j++) {
+        if (berahiRowSudahDipakai[j]) continue; // sudah dipasangkan ke baris IB lain
+        const eartagBerahi = normalizeString(dataBerahi[j][idxB_eartag]);
+        const statusBerahi = String(dataBerahi[j][idxB_statusIB] || "").trim().toLowerCase();
+        if (eartagBerahi !== eartagIB) continue;
+        if (statusBerahi !== "belum") continue; // sudah "Sudah" berarti sudah pernah tersinkron/terpakai
+
+        const tglLaporTime = parseTgl(dataBerahi[j][idxB_tglLapor]);
+        // Prioritas: laporan yang tanggalnya <= tanggal IB dan paling dekat/terbaru
+        if (tglIBTime > 0 && tglLaporTime > 0) {
+          if (tglLaporTime <= tglIBTime && tglLaporTime > kandidatTglTerbaik) {
+            kandidatTerbaik = j;
+            kandidatTglTerbaik = tglLaporTime;
+          }
+        } else {
+          // Kalau tanggal tidak bisa dibandingkan, ambil kandidat pertama yang cocok
+          if (kandidatTerbaik === -1) kandidatTerbaik = j;
+        }
+      }
+      baris_TargetDiBerahi = kandidatTerbaik;
+    }
+
+    if (baris_TargetDiBerahi === -1) {
+      jumlahTidakDitemukanPasangan++;
+      rowsTidakDitemukan.push(eartagIB + " (baris IB ke-" + (i + 1) + ")");
+      continue;
+    }
+
+    berahiRowSudahDipakai[baris_TargetDiBerahi] = true;
+bulk_add_ib
+    const statusSaatIni = String(dataBerahi[baris_TargetDiBerahi][idxB_statusIB] || "").trim().toLowerCase();
+    if (statusSaatIni === "sudah") {
+      jumlahSudahBenar++;
+      continue;
+    }
+
+    // Tulis update ke sel spreadsheet langsung
+    sheetBerahi.getRange(baris_TargetDiBerahi + 1, idxB_statusIB + 1).setValue("Sudah");
+    // Update juga cache lokal supaya tidak dihitung dobel kalau ada baris IB lain merujuk baris yg sama
+    dataBerahi[baris_TargetDiBerahi][idxB_statusIB] = "Sudah";
+
+    if (idLaporIB && idLaporIB !== "-" && idLaporIB !== "") {
+      jumlahDiupdateViaIdLapor++;
+    } else {
+      jumlahDiupdateViaFallbackEartag++;
+    }
+  }
+
+  const ringkasan =
+    "SINKRONISASI SELESAI!\n" +
+    "- Diupdate via id_lapor cocok: " + jumlahDiupdateViaIdLapor + "\n" +
+    "- Diupdate via fallback eartag: " + jumlahDiupdateViaFallbackEartag + "\n" +
+    "- Sudah benar sebelumnya: " + jumlahSudahBenar + "\n" +
+    "- Tidak ditemukan laporan berahi pasangannya: " + jumlahTidakDitemukanPasangan +
+    (rowsTidakDitemukan.length > 0 ? ("\n  Detail: " + rowsTidakDitemukan.join(", ")) : "");
+
+  Logger.log(ringkasan);
+  return ringkasan;
+}
+
+function backfillLaporanBerahiDariIB() {
+  if (typeof normalizeString === "undefined") {
+    normalizeString = function(str) {
+      if (!str) return "";
+      return str.toString().trim().toLowerCase().replace(/['"”’‘]/g, "").replace(/\s+/g, " ");
+    };
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetIB = ss.getSheetByName("Database IB");
+  const sheetBerahi = ss.getSheetByName("Laporan Berahi");
+
+  if (!sheetIB) return "Gagal: Sheet 'Database IB' tidak ditemukan!";
+  if (!sheetBerahi) return "Gagal: Sheet 'Laporan Berahi' tidak ditemukan!";
+
+  const dataIB = sheetIB.getDataRange().getDisplayValues();
+  const headerIB = dataIB[0];
+  const idxIB_idLapor = headerIB.indexOf("id_lapor");
+  const idxIB_tglIB = headerIB.indexOf("tanggal_ib");
+  const idxIB_eartag = headerIB.indexOf("eartag");
+  const idxIB_rumpun = headerIB.indexOf("rumpun");
+  const idxIB_derajat = headerIB.indexOf("derajat_berahi");
+
+  const dataBerahi = sheetBerahi.getDataRange().getDisplayValues();
+  const headerBerahi = dataBerahi[0];
+  const idxB_idLapor = headerBerahi.indexOf("id_lapor");
+  const idxB_eartag = headerBerahi.indexOf("eartag");
+
+  if ([idxIB_idLapor, idxIB_tglIB, idxIB_eartag].indexOf(-1) !== -1) {
+    return "Gagal: Struktur kolom 'Database IB' tidak sesuai (cek header id_lapor/tanggal_ib/eartag).";
+  }
+  if ([idxB_idLapor, idxB_eartag].indexOf(-1) !== -1) {
+    return "Gagal: Struktur kolom 'Laporan Berahi' tidak sesuai (cek header id_lapor/eartag).";
+  }
+
+  let jumlahSudahAdaLaporan = 0;
+  let jumlahDibuatkanBaru = 0;
+  const berahiRowSudahDipakai = {};
+
+  for (let i = 1; i < dataIB.length; i++) {
+    const rowIB = dataIB[i];
+    const eartagIB = normalizeString(rowIB[idxIB_eartag]);
+    if (!eartagIB) continue; // baris kosong
+
+    const idLaporIB = String(rowIB[idxIB_idLapor] || "").trim();
+    let baris_TargetDiBerahi = -1;
+
+    // STRATEGI 1: id_lapor valid -> cari baris Laporan Berahi persis dengan id itu
+    if (idLaporIB && idLaporIB !== "-" && idLaporIB !== "") {
+      for (let j = 1; j < dataBerahi.length; j++) {
+        if (!berahiRowSudahDipakai[j] && normalizeString(dataBerahi[j][idxB_idLapor]) === normalizeString(idLaporIB)) {
+          baris_TargetDiBerahi = j;
+          break;
+        }
+      }
+    }
+
+    // STRATEGI 2 (FALLBACK): cari laporan berahi dengan eartag yang sama, yang belum dipakai
+    if (baris_TargetDiBerahi === -1) {
+      for (let j = 1; j < dataBerahi.length; j++) {
+        if (berahiRowSudahDipakai[j]) continue;
+        if (normalizeString(dataBerahi[j][idxB_eartag]) === eartagIB) {
+          baris_TargetDiBerahi = j;
+          break;
+        }
+      }
+    }
+
+    if (baris_TargetDiBerahi !== -1) {
+      berahiRowSudahDipakai[baris_TargetDiBerahi] = true;
+      jumlahSudahAdaLaporan++;
+      continue; // sudah ada laporan berahinya, tidak perlu dibuatkan baru
+    }
+
+    // TIDAK DITEMUKAN laporan berahi pasangannya -> buatkan baru (backfill)
+    const idLaporBaru = "LAP-BF-" + new Date().getTime() + "-" + i;
+    const tglLapor = rowIB[idxIB_tglIB] || "-";
+    const eartagFormatted = formatEartag(rowIB[idxIB_eartag]);
+    const rumpun = rowIB[idxIB_rumpun] || "-";
+    const derajat = rowIB[idxIB_derajat] || "-";
+
+    sheetBerahi.appendRow([
+      idLaporBaru,          // id_lapor
+      tglLapor,             // tanggal_lapor (disamakan dgn tanggal_ib krn tanggal lapor asli tidak diketahui)
+      eartagFormatted,      // eartag
+      rumpun,               // rumpun
+      derajat,              // derajat_berahi
+      "Layak IB",           // rekomendasi (sudah pasti layak krn faktanya sudah di-IB)
+      "Auto-backfill dari Database IB (data historis, dibuat otomatis oleh skrip)", // keterangan
+      "Sudah",              // status_ib
+      "System-Backfill"     // input_by
+    ]);
+
+    // Hubungkan balik id_lapor di baris IB ini supaya relasinya benar untuk ke depannya
+    sheetIB.getRange(i + 1, idxIB_idLapor + 1).setValue(idLaporBaru);
+
+    jumlahDibuatkanBaru++;
+  }
+
+  const ringkasan =
+    "BACKFILL SELESAI!\n" +
+    "- Baris IB yang sudah punya laporan berahi (dilewati, tidak dibuat dobel): " + jumlahSudahAdaLaporan + "\n" +
+    "- Laporan berahi baru dibuat otomatis (backfill dari IB): " + jumlahDibuatkanBaru;
+
+  Logger.log(ringkasan);
+  return ringkasan;
+}
+
+function getSheetDataAsJSON_Cached(sheet, cacheKey, ttlDetik) {
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get(cacheKey);
+  if (cached) {
+    return JSON.parse(cached);
+  }
+  var data = getSheetDataAsJSON(sheet); // reuse fungsi asli, logikanya tidak diubah
+  try {
+    // Cache Apps Script max 100KB per key & TTL max 21600 detik (6 jam)
+    cache.put(cacheKey, JSON.stringify(data), Math.min(ttlDetik || 1800, 21600));
+  } catch (e) {
+    // Kalau data terlalu besar untuk cache (>100KB), abaikan saja, tetap return data asli
+    Logger.log("Cache skip untuk " + cacheKey + ": " + e.message);
+  }
+  return data;
+}
+
+// Panggil ini setiap ada perubahan di sheet referensi (add/update/delete lokasi, update SNI, dst)
+// supaya cache tidak menyajikan data basi.
+function invalidateCache(cacheKey) {
+  CacheService.getScriptCache().remove(cacheKey);
+}
