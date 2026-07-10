@@ -7135,7 +7135,7 @@ let sisaWaktu = diffDays > 0
   // 12. BERITA ACARA SELEKSI (BAS) REPORT ENGINE
   latestLivePengukuran() {
     if (!this.dataDatabase || !this.dataPengukuran) return [];
-    const liveEartags = new Set(this.dataDatabase.filter(s => String(s.status_ternak).toLowerCase() === 'hidup').map(s => String(s.id_ternak).trim().toUpperCase()));
+    const liveEartags = new Set(this.dataDatabase.filter(s => String(s.status_ternak).toLowerCase() === 'hidup').map(s => String(s.eartag).trim().toUpperCase()));
     const latestMap = new Map();
     const parseTgl = (t) => { if (!t || t === '-') return 0; return t.includes('/') ? new Date(t.split('/')[2], t.split('/')[1] - 1, t.split('/')[0]).getTime() : new Date(t).getTime(); };
     
@@ -7148,7 +7148,7 @@ let sisaWaktu = diffDays > 0
     
     const result = [];
     latestMap.forEach((ukr, tag) => {
-      const sapi = this.dataDatabase.find(s => String(s.id_ternak).trim().toUpperCase() === tag);
+      const sapi = this.dataDatabase.find(s => String(s.eartag).trim().toUpperCase() === tag);
       if (!sapi) return;
       let umurBln = "-";
       if (sapi.tanggal_lahir) {
@@ -7192,7 +7192,7 @@ let sisaWaktu = diffDays > 0
     // Eartag yang sudah punya baris transaksi di Laporan Penjualan (sudah/pernah diproses jual)
     const soldEartags = new Set((this.dataPenjualan || []).map(p => String(p.eartag || '').trim().toUpperCase()));
     // Eartag ternak yang masih Hidup
-    const liveEartags = new Set(this.dataDatabase.filter(s => String(s.status_ternak).toLowerCase() === 'hidup').map(s => String(s.id_ternak).trim().toUpperCase()));
+    const liveEartags = new Set(this.dataDatabase.filter(s => String(s.status_ternak).toLowerCase() === 'hidup').map(s => String(s.eartag).trim().toUpperCase()));
     // Gabungan: Hidup ATAU sudah tercatat di Laporan Penjualan (walau status_ternak sudah Jual)
     const eligibleEartags = new Set([...liveEartags, ...soldEartags]);
 
@@ -7218,7 +7218,7 @@ let sisaWaktu = diffDays > 0
     };
 
     latestMap.forEach((ukr, tag) => {
-        const sapi = this.dataDatabase.find(s => String(s.id_ternak).trim().toUpperCase() === tag);
+        const sapi = this.dataDatabase.find(s => String(s.eartag).trim().toUpperCase() === tag);
         if (!sapi) return;
 
         // --- LOGIKA KECERDASAN GRADE SNI & STATUS HOLD (murni dari data pengukuran, TIDAK dipengaruhi filter tab manapun) ---
@@ -8808,7 +8808,7 @@ validateBerahiRow(row) {
   }
   
   // 2. Validasi Eartag terdaftar di Database Ternak Utama
-  const sapi = this.dataDatabase.find(s => String(s.id_ternak).trim().toUpperCase() === eartag);
+  const sapi = this.dataDatabase.find(s => String(s.eartag).trim().toUpperCase() === eartag);
   if (!sapi) {
     return { valid: false, reason: "Eartag '" + eartag + "' tidak ditemukan di Database Ternak" };
   }
@@ -8859,7 +8859,7 @@ validateIBRow(row) {
 
   // Cari data sapi hanya untuk mengisi Rumpun Auto di tabel preview -- TIDAK memblokir
   // kalau eartag tidak ditemukan di Database Ternak (sesuai permintaan: abaikan validasi ini).
-  const sapi = this.dataDatabase.find(s => String(s.id_ternak).trim().toUpperCase() === eartag);
+  const sapi = this.dataDatabase.find(s => String(s.eartag).trim().toUpperCase() === eartag);
   const rumpunAuto = sapi ? sapi.rumpun_ternak : (row.rumpun || "-");
 
   // Cari laporan berahi "Layak IB" & masih "Belum" untuk eartag ini (opsional, tidak memblokir).
@@ -8913,11 +8913,11 @@ validateKelahiranRow(row) {
 
   // Cari induk hanya untuk mengisi Rumpun Auto di tabel preview -- TIDAK memblokir
   // kalau eartag induk tidak ditemukan di Database Ternak (sesuai skema IB).
-  const induk = this.dataDatabase.find(s => String(s.id_ternak).trim().toUpperCase() === eartagInduk);
+  const induk = this.dataDatabase.find(s => String(s.eartag).trim().toUpperCase() === eartagInduk);
   const rumpunAuto = induk ? induk.rumpun_ternak : (row.rumpun_induk || "-");
 
   // Cek status eartag anak di KEDUA database secara terpisah (2 jalur independen).
-  const ternakAnak = this.dataDatabase.find(s => String(s.id_ternak).trim().toUpperCase() === eartagAnak);
+  const ternakAnak = this.dataDatabase.find(s => String(s.eartag).trim().toUpperCase() === eartagAnak);
   const sudahAdaDiKelahiran = (this.dataKelahiran || []).some(r => String(r.eartag_anak || '').trim().toUpperCase() === eartagAnak);
 
   // TOLAK HANYA JIKA sudah LENGKAP tercatat di KEDUA database -- benar-benar duplikat.
@@ -9366,7 +9366,7 @@ async executeBulkUpload() {
       // PATCH FIX: pengaman ganda (selain tombol yg sudah disembunyikan/diganti badge) agar eartag yang
       // sudah berstatus Jual di Database Ternak tidak bisa dikonfirmasi ulang (mencegah klik berkali-kali).
       const tagCek = String(this.formPenjualan.eartag).trim().toUpperCase();
-      const sapiCek = this.dataDatabase.find(s => String(s.id_ternak).trim().toUpperCase() === tagCek);
+      const sapiCek = this.dataDatabase.find(s => String(s.eartag).trim().toUpperCase() === tagCek);
       if (sapiCek && String(sapiCek.status_ternak).toLowerCase() === 'jual') {
         alert(`Eartag ${this.formPenjualan.eartag} sudah dikonfirmasi TERJUAL sebelumnya. Tidak bisa dikonfirmasi ulang.`);
         this.showModal = false;
@@ -9382,7 +9382,7 @@ async executeBulkUpload() {
 
         // 2. Ubah status ternak di Database Ternak menjadi Jual
         const tag = String(this.formPenjualan.eartag).trim().toUpperCase();
-        const sapi = this.dataDatabase.find(s => String(s.id_ternak).trim().toUpperCase() === tag);
+        const sapi = this.dataDatabase.find(s => String(s.eartag).trim().toUpperCase() === tag);
         if (!sapi) { alert("Data ternak tidak ditemukan di Database Ternak!"); this.isLoading = false; return; }
 
         const tglJualDisplay = this.formatDisplayDate(this.formPenjualan.tanggal_jual);
@@ -9396,7 +9396,7 @@ async executeBulkUpload() {
         await this.apiCall('updatedatabase', payloadDb);
 
         // 3. Update memori lokal agar langsung hilang dari daftar "Hidup" di semua menu
-        const idx = this.dataDatabase.findIndex(s => String(s.id_ternak).trim().toUpperCase() === tag);
+        const idx = this.dataDatabase.findIndex(s => String(s.eartag).trim().toUpperCase() === tag);
         if (idx > -1) {
           const upd = [...this.dataDatabase];
           upd[idx] = { ...upd[idx], status_ternak: 'Jual', tanggal_kejadian: tglJualDisplay };
@@ -9632,7 +9632,7 @@ autoFillKelahiranMandiri() {
   const selectedEartag = String(this.formKelahiran.eartag_induk || '').trim().toUpperCase();
   this.formKelahiran.eartag_induk = selectedEartag;
   if (!selectedEartag) { this.formKelahiran.rumpun_induk = ''; this.formKelahiran.rumpun_anak = ''; return; }
-  const sapi = this.indukBetinaMandiri.find(s => String(s.id_ternak).trim().toUpperCase() === selectedEartag);
+  const sapi = this.indukBetinaMandiri.find(s => String(s.eartag).trim().toUpperCase() === selectedEartag);
   if (sapi) {
     this.formKelahiran.rumpun_induk = sapi.rumpun_ternak || '';
     this.formKelahiran.rumpun_anak = sapi.rumpun_ternak || '';
@@ -9648,7 +9648,7 @@ autoFillKelahiranMandiri() {
     this.formPKB.eartag = eartag;
     
     // 1. Sinkronisasi Rumpun: Cari dari Database Utama agar akurat
-    const sapi = this.dataDatabase.find(s => String(s.id_ternak).trim().toUpperCase() === eartag);
+    const sapi = this.dataDatabase.find(s => String(s.eartag).trim().toUpperCase() === eartag);
     if (sapi) {
         this.formPKB.rumpun = sapi.rumpun_ternak || '-';
     } else {
