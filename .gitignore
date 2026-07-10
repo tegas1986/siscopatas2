@@ -8,6 +8,10 @@ backend/node_modules/
 .env.local
 .env.*.local
 
+# Data migrasi (berisi data asli, jangan di-commit)
+migration/csv/
+migration/json/
+
 # Logs
 logs/
 *.log

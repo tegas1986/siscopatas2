@@ -1,0 +1,13 @@
+{
+  "name": "siscopatas-migration",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Migrasi data Google Sheets -> Supabase untuk SISCOPATAS",
+  "type": "commonjs",
+  "scripts": {
+    "migrate": "node migrate.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.2"
+  }
+}

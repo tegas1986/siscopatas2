@@ -12,7 +12,7 @@
 <link href='https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css' rel='stylesheet'/>
 <!-- Flatpickr JS -->
 <script src='https://cdn.jsdelivr.net/npm/flatpickr'/>
-<script src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'></script>
+<script src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'/>
 
 
 <style>
@@ -392,6 +392,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
       <b:widget-setting name='style.layout'>1x1</b:widget-setting>
       <b:widget-setting name='showLabels'>true</b:widget-setting>
       <b:widget-setting name='showLocation'>true</b:widget-setting>
+      <b:widget-setting name='postLabelsLabel'/>
       <b:widget-setting name='showTimestamp'>true</b:widget-setting>
       <b:widget-setting name='postsPerAd'>2</b:widget-setting>
       <b:widget-setting name='showBacklinks'>false</b:widget-setting>
@@ -2683,7 +2684,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
         <tr v-for='db in filteredDatabase.slice().reverse()'>
           <td class='text-start ps-4 fw-bold text-dark font-monospace' style='letter-spacing: 0.5px;'>{{ db.eartag }}</td>
           <td><span class='fw-semibold text-secondary'>{{ db.rumpun_ternak }}</span></td>
-          <td><span class='badge' v-bind:class='db.registrasi === "Aset" ? "bg-warning bg-opacity-10 text-warning px-2 py-1" : "bg-info bg-opacity-10 text-info px-2 py-1"' style='font-size: 0.7rem;'>{{ db.registrasi || "Persediaan" }}</span></td>
+          <td><span class='badge' style='font-size: 0.7rem;' v-bind:class='db.registrasi === &quot;Aset&quot; ? &quot;bg-warning bg-opacity-10 text-warning px-2 py-1&quot; : &quot;bg-info bg-opacity-10 text-info px-2 py-1&quot;'>{{ db.registrasi || &quot;Persediaan&quot; }}</span></td>
           <td class='text-muted small'>{{ formatDisplayDate(db.tanggal_lahir) }}</td>
           <td>
             <span style='border-radius: 20px; font-size: 0.75rem; font-weight: 600;' v-bind:class='db.jenis_kelamin === &quot;Jantan&quot; ? &quot;badge bg-primary bg-opacity-10 text-primary px-3 py-1.5&quot; : &quot;badge bg-danger bg-opacity-10 text-danger px-3 py-1.5&quot;'>
@@ -2692,7 +2693,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
           </td>
           <td class='num-tabular fw-bold text-dark'>{{ hitungUmurTahunBulanHari(db.tanggal_lahir) }}</td>
           <td><span class='badge bg-light text-dark border px-2 py-1' style='font-size: 11px;'>{{ hitungKategoriLive(db.tanggal_lahir, db.kategori) }}</span></td>
-          <td><span class='badge' v-bind:class='db.registrasi === "Aset" ? "bg-warning bg-opacity-10 text-warning px-2 py-1" : "bg-info bg-opacity-10 text-info px-2 py-1"' style='font-size: 0.7rem;'>{{ db.registrasi || "Persediaan" }}</span></td>
+          <td><span class='badge' style='font-size: 0.7rem;' v-bind:class='db.registrasi === &quot;Aset&quot; ? &quot;bg-warning bg-opacity-10 text-warning px-2 py-1&quot; : &quot;bg-info bg-opacity-10 text-info px-2 py-1&quot;'>{{ db.registrasi || &quot;Persediaan&quot; }}</span></td>
           <td>
             <span style='border-radius: 6px; font-weight: 700; font-size: 0.75rem;' v-bind:class='db.status_ternak === &quot;Hidup&quot; ? &quot;badge bg-success bg-opacity-10 text-success px-3 py-1.5&quot; : &quot;badge bg-secondary bg-opacity-10 text-secondary px-3 py-1.5&quot;'>
               &#9679; {{ db.status_ternak }}
@@ -2702,7 +2703,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
             <div class='text-truncate'>&#9794;&#65039; Bapak: <strong class='text-dark'>{{ db.bapak || &#39;-&#39; }}</strong></div>
             <div class='text-truncate'>&#9792;&#65039; Induk: <strong class='text-dark'>{{ db.induk || &#39;-&#39; }}</strong></div>
           </td>
-           <td class='fw-semibold text-dark text-start ps-3' style='font-size: 0.85rem;'><i class='fas fa-map-marker-alt text-danger me-1'/> {{ db.nama_lokasi || lokasiNama(db.lokasi_saat_ini) || &#39;-&#39; }}</td>
+          <td class='fw-semibold text-dark text-start ps-3' style='font-size: 0.85rem;'><i class='fas fa-map-marker-alt text-danger me-1'/> {{ db.lokasi_saat_ini || &#39;-&#39; }}</td>
           <td class='pe-4' v-if='canEditDataRole'>
             <div class='d-flex justify-content-center gap-1'>
               <button class='btn btn-sm btn-outline-warning btn-action-corp' title='Edit Komponen Sapi' v-if='canEditDB' v-on:click='editData(&quot;database&quot;, db)'>
@@ -2755,7 +2756,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
       </div>
       <div class='ukur-info-block'>
         <span class='ukur-label'><i class='fas fa-map-marker-alt'/> Lokasi</span>
-        <span class='ukur-value' style='color: #0d6efd;'>{{ db.nama_lokasi || lokasiNama(db.lokasi_saat_ini) || &#39;-&#39; }}</span>
+        <span class='ukur-value' style='color: #0d6efd;'>{{ db.lokasi_saat_ini || &#39;-&#39; }}</span>
       </div>
       <div class='ukur-info-block' style='grid-column: span 2;'>
         <span class='ukur-label'><i class='fas fa-network-wired'/> Silsilah</span>
@@ -4116,7 +4117,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
             <td>{{ formatDisplayDate(mut.tanggal_mutasi) }}</td>
             <td class='fw-bold font-monospace'>{{ mut.eartag }}</td>
             <td class='text-muted'>{{ mut.dari_lokasi }}</td>
-            <td class='fw-bold text-success'>{{ lokasiNama(mut.lokasi_saat_ini) }}</td>
+            <td class='fw-bold text-success'>{{ mut.lokasi_saat_ini }}</td>
             
             <!-- Kolom DURASI: Menampilkan data database, fallback ke hitungDurasiLive jika kosong -->
             <td class='num-tabular text-purple'>
@@ -4150,7 +4151,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
       </div>
       <div class='row g-2 small'>
         <div class='col-6'>Asal: <strong>{{ mut.dari_lokasi }}</strong></div>
-        <div class='col-6'>Tujuan: <strong class='text-success'>{{ lokasiNama(mut.lokasi_saat_ini) }}</strong></div>
+        <div class='col-6'>Tujuan: <strong class='text-success'>{{ mut.lokasi_saat_ini }}</strong></div>
         <div class='col-12'>Durasi: <strong class='text-purple'>{{ hitungDurasiLive(mut.tanggal_mutasi) }}</strong></div>
         <div class='col-12 text-muted'>Alasan: <em>{{ mut.alasan || &#39;-&#39; }}</em></div>
       </div>
@@ -4651,7 +4652,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
                   </thead>
                   <tbody>
                     <tr v-bind:key='m.id_mutasi' v-for='m in dataMutasi.filter(x =&gt; x.eartag === selectedEartag)'>
-                      <td class='num-tabular text-muted small'>{{ formatDisplayDate(m.tanggal_mutasi) }}</td><td class='font-monospace small text-secondary'>{{ m.id_mutasi }}</td><td>{{ m.dari_lokasi || &#39;-&#39; }}</td><td class='fw-bold text-success'>{{ lokasiNama(m.lokasi_saat_ini) }}</td><td class='text-start small text-dark'>{{ m.alasan || &#39;-&#39; }}</td><td class='small text-muted font-monospace'>@{{ m.input_by }}</td>
+                      <td class='num-tabular text-muted small'>{{ formatDisplayDate(m.tanggal_mutasi) }}</td><td class='font-monospace small text-secondary'>{{ m.id_mutasi }}</td><td>{{ m.dari_lokasi || &#39;-&#39; }}</td><td class='fw-bold text-success'>{{ m.lokasi_saat_ini }}</td><td class='text-start small text-dark'>{{ m.alasan || &#39;-&#39; }}</td><td class='small text-muted font-monospace'>@{{ m.input_by }}</td>
                     </tr>
                     <tr v-if='dataMutasi.filter(x =&gt; x.eartag === selectedEartag).length === 0'>
                       <td class='text-muted py-4 text-center text-no-activity' colspan='6'><i class='fas fa-info-circle me-1'/> Sapi ini belum memiliki riwayat perpindahan sektor (Menetap di lokasi awal).</td>
@@ -4679,7 +4680,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
                     </div>
                     <div class='ukur-info-block'>
                       <span class='ukur-label'><i class='fas fa-map-marker-alt'/> Ke Lokasi</span>
-                      <span class='ukur-value' style='color: #16a34a;'>{{ lokasiNama(m.lokasi_saat_ini) }}</span>
+                      <span class='ukur-value' style='color: #16a34a;'>{{ m.lokasi_saat_ini }}</span>
                     </div>
                     <div class='ukur-info-block' style='grid-column: span 2;'>
                       <span class='ukur-label'><i class='fas fa-comment-dots'/> Keterangan</span>
@@ -5181,7 +5182,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
   
 <div v-if='modalType === &apos;petugas_repro&apos; || modalType === &apos;petugas_keswan&apos;'><div class='mb-3'><label class='small fw-bold'>Nama Petugas</label><input class='form-control' required='required' type='text' v-model='formPetugas.nama_petugas'/></div><div class='mb-3'><label class='small fw-bold'>Jabatan</label><select class='form-select' required='required' v-model='formPetugas.jabatan'><option>Terampil</option><option>Mahir</option><option>Penyelia</option><option>Ahli Pertama</option><option>Ahli Muda</option><option>Ahli Madya</option></select></div></div>
 <div v-if='modalType === &apos;bull&apos;'><div class='mb-3'><label class='small fw-bold text-primary'>Nama Bull</label><input class='form-control border-primary' required='required' type='text' v-model='formBull.nama_bull'/></div><div class='mb-3'><label class='small fw-bold'>Rumpun</label><select class='form-select' required='required' v-model='formBull.rumpun'><option>Simmental</option><option>Limousin</option><option>Pesisir</option><option>Brahman</option><option>Belgian Blue</option><option>Frisian Holstein</option><option>BBx Sim</option><option>BBx Lim</option><option>Simx Lim</option><option>Silangan</option><option>Lokal</option></select></div><div class='mb-3'><label class='small fw-bold'>Asal</label><input class='form-control' required='required' type='text' v-model='formBull.asal'/></div><div class='row'><div class='col'><div class='mb-3'><label class='small fw-bold'>Stok Awal</label><input class='form-control' required='required' type='number' v-model='formBull.stok_awal'/></div></div><div class='col'><div class='mb-3'><label class='small fw-bold text-success'>Stok Saat Ini</label><input class='form-control border-success' required='required' type='number' v-model='formBull.stok_saat_ini'/></div></div></div></div>
-<div v-if='modalType === &apos;database&apos;'><div class='mb-2'><label class='small fw-bold text-primary'>ID Ternak (Tag)</label><input class='form-control border-primary' required='required' type='text' v-bind:disabled='isEdit' v-model='formDb.id_ternak' v-on:input='formDb.id_ternak = formDb.id_ternak.toUpperCase()'/></div><div class='row'><div class='col'><div class='mb-2'><label class='small fw-bold'>Tanggal Lahir</label><input class='form-control' type='date' v-model='formDb.tanggal_lahir'/></div></div><div class='col'><div class='mb-2'><label class='small fw-bold'>Rumpun</label><select class='form-select' required='required' v-model='formDb.rumpun_ternak'><option>Simmental</option><option>Limousin</option><option>Pesisir</option><option>Brahman</option><option>Belgian Blue</option><option>Frisian Holstein</option><option>BBx Sim</option><option>BBx Lim</option><option>Simx Lim</option><option>Silangan</option><option>Lokal</option></select></div></div></div><div class='mb-2'><label class='small fw-bold'>Kelamin</label><select class='form-select' required='required' v-model='formDb.jenis_kelamin'><option>Jantan</option><option>Betina</option></select></div><div class='mb-2'><label class='small fw-bold text-primary'>Registrasi</label><select class='form-select border-primary' required='required' v-model='formDb.registrasi'><option>Persediaan</option><option>Aset</option></select></div><div class='row'><div class='col'><div class='mb-2'><label class='small fw-bold text-success'>Bapak (Database Bull)</label><input class='form-control border-success fw-bold' list='listBullFormDb' placeholder='Ketik/cari nama bull...' required='required' type='text' v-model='formDb.bapak'/><datalist id='listBullFormDb'><option v-bind:key='&quot;dbbullformdb-&quot;+bull.nama_bull' v-bind:value='bull.nama_bull' v-for='bull in dataBull'>{{ bull.rumpun }} - Sisa: {{ bull.stok_saat_ini }} Dosis</option></datalist></div></div><div class='col'><div class='mb-2'><label class='small fw-bold'>Induk</label><input class='form-control' list='listIndukFormDb' placeholder='Ketik/cari eartag induk...' required='required' type='text' v-model='formDb.induk'/><datalist id='listIndukFormDb'><option v-bind:key='&quot;dbindukformdb-&quot;+ind.eartag' v-bind:value='ind.eartag' v-for='ind in indukBetinaMandiri'>{{ ind.eartag }} - {{ ind.rumpun_ternak }}</option></datalist></div></div></div>
+<div v-if='modalType === &apos;database&apos;'><div class='mb-2'><label class='small fw-bold text-primary'>ID Ternak (Tag)</label><input class='form-control border-primary' required='required' type='text' v-bind:disabled='isEdit' v-model='formDb.id_ternak' v-on:input='formDb.id_ternak = formDb.id_ternak.toUpperCase()'/></div><div class='row'><div class='col'><div class='mb-2'><label class='small fw-bold'>Tanggal Lahir</label><input class='form-control' type='date' v-model='formDb.tanggal_lahir'/></div></div><div class='col'><div class='mb-2'><label class='small fw-bold'>Rumpun</label><select class='form-select' required='required' v-model='formDb.rumpun_ternak'><option>Simmental</option><option>Limousin</option><option>Pesisir</option><option>Brahman</option><option>Belgian Blue</option><option>Frisian Holstein</option><option>BBx Sim</option><option>BBx Lim</option><option>Simx Lim</option><option>Silangan</option><option>Lokal</option></select></div></div></div><div class='mb-2'><label class='small fw-bold'>Kelamin</label><select class='form-select' required='required' v-model='formDb.jenis_kelamin'><option>Jantan</option><option>Betina</option></select></div><div class='mb-2'><label class='small fw-bold text-primary'>Registrasi</label><select class='form-select border-primary' required='required' v-model='formDb.registrasi'><option>Persediaan</option><option>Aset</option></select></div><div class='row'><div class='col'><div class='mb-2'><label class='small fw-bold text-success'>Bapak (Database Bull)</label><input class='form-control border-success fw-bold' list='listBullFormDb' placeholder='Ketik/cari nama bull...' required='required' type='text' v-model='formDb.bapak'/><datalist id='listBullFormDb'><option v-bind:key='&quot;dbbullformdb-&quot;+bull.nama_bull' v-bind:value='bull.nama_bull' v-for='bull in dataBull'>{{ bull.rumpun }} - Sisa: {{ bull.stok_saat_ini }} Dosis</option></datalist></div></div><div class='col'><div class='mb-2'><label class='small fw-bold'>Induk</label><input class='form-control' list='listIndukFormDb' placeholder='Ketik/cari eartag induk...' required='required' type='text' v-model='formDb.induk'/><datalist id='listIndukFormDb'><option v-bind:key='&quot;dbindukformdb-&quot;+ind.id_ternak' v-bind:value='ind.id_ternak' v-for='ind in indukBetinaMandiri'>{{ ind.rumpun_ternak }}</option></datalist></div></div></div>
 
 <div class='mb-2'><label class='small fw-bold'>Status Ternak</label><select class='form-select' required='required' v-model='formDb.status_ternak'><option>Hidup</option><option>Mati</option><option>Jual</option><option>Hibah</option><option>Pindah</option></select></div><div class='mb-2' v-if='formDb.status_ternak!== &apos;Hidup&apos;'><label class='small fw-bold text-danger'>Tgl Kejadian</label><input class='form-control border-danger' required='required' type='date' v-model='formDb.tanggal_kejadian'/></div></div>
   
@@ -5554,7 +5555,7 @@ body, html { margin: 0 !important; padding: 0 !important; overflow: hidden !impo
     <div class='mb-3'>
         <label class='small fw-bold text-primary'>Dokumentasi Foto PKB</label>
         <div class='d-flex align-items-center gap-2'>
-            <input class='form-control' type='file' accept='image/*' v-on:change='handleImageUploadPKB'/>
+            <input accept='image/*' class='form-control' type='file' v-on:change='handleImageUploadPKB'/>
             <button class='btn btn-outline-info btn-sm' type='button' v-if='formPKB.link_foto_pkb' v-on:click='openImageViewer(formPKB.link_foto_pkb)'>
                 <i class='fas fa-image'/> Lihat
             </button>
@@ -8298,17 +8299,6 @@ getLokasiSekarang(eartag, fallback) {
     
     // Jika tidak ada di Log Mutasi, baru gunakan fallback (lokasi awal di Database Ternak)
     return fallback || 'Belum Terpetakan';
-},
-
-// Terjemahkan lokasi_saat_ini (bisa berupa UUID FK ref_lokasi ATAU nama_lokasi)
-// menjadi nama_lokasi yang mudah dibaca. Pakai dataLokasi (ref_lokasi) sebagai map.
-lokasiNama(val) {
-    if (!val) return '-';
-    const lok = (this.dataLokasi || []).find(l => l.id_lokasi === val);
-    if (lok) return lok.nama_lokasi;
-    // sudah berupa nama (bukan UUID) -> tampilkan apa adanya
-    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-/.test(val)) return val;
-    return val; // UUID tak dikenal: tampilkan apa adanya (fallback)
 },
 
     downloadExcelBAS() {
