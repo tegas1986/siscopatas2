@@ -1,0 +1,62 @@
+-- ============================================================
+-- SISCOPATAS - Supabase Storage untuk Foto Kelahiran
+-- File 13: Bucket + RLS Storage (foto-kelahiran)
+-- ============================================================
+-- PENTING: Jangan jalankan CREATE POLICY / ALTER TABLE pada
+-- storage.objects lewat SQL Editor biasa -> ERROR 42501
+-- "must be owner of table objects" (tabel itu dimiliki role
+-- internal supabase_storage_admin). BUAT BUCKET & POLICY LEWAT
+-- DASHBOARD (lihat panduan di bawah), BUKAN via SQL ini.
+--
+-- SQL di bawah HANYA membuat baris bucket di storage.buckets
+-- (aman dijalankan di SQL Editor). Jika baris ini pun gagal
+-- karena permission, buat bucket lewat Dashboard Storage saja.
+-- ============================================================
+
+-- 1. Buat/update baris bucket (public agar <img> bisa render)
+--    Jika query ini error permission, lewati & buat di Dashboard.
+insert into storage.buckets (id, name, public)
+values ('foto-kelahiran', 'foto-kelahiran', true)
+on conflict (id) do update set public = true;
+
+
+-- ============================================================
+-- 2. BUAT POLICY STORAGE LEWAT DASHBOARD (bukan SQL Editor)
+-- ============================================================
+-- Buka Supabase Dashboard -> Storage -> pilih bucket "foto-kelahiran"
+-- -> tab "Policies" (atau menu Storage -> Policies). Tambahkan:
+--
+-- (a) SELECT (Baca Publik)
+--     - Klik "New Policy" -> "For Full Access" / template "Enable read
+--       access to everyone" untuk bucket ini.
+--     - Atau policy manual:
+--         CREATE POLICY "foto_public_read" ON storage.objects
+--           FOR SELECT USING (bucket_id = 'foto-kelahiran');
+--     (bucket sudah Public, jadi baca umum diperbolehkan)
+--
+-- (b) INSERT (Upload hanya user login, ke folder <auth.uid()>/)
+--     - Policy manual (jalankan di Dashboard "SQL" atau Policies UI):
+--         CREATE POLICY "foto_auth_upload" ON storage.objects
+--           FOR INSERT TO authenticated
+--           WITH CHECK (
+--             bucket_id = 'foto-kelahiran'
+--             AND (storage.foldername(name))[1] = auth.uid()::text
+--           );
+--
+-- (c) UPDATE & DELETE (hanya pemilik foldernya)
+--         CREATE POLICY "foto_owner_update" ON storage.objects
+--           FOR UPDATE TO authenticated
+--           USING (bucket_id = 'foto-kelahiran'
+--                  AND (storage.foldername(name))[1] = auth.uid()::text)
+--           WITH CHECK (bucket_id = 'foto-kelahiran'
+--                  AND (storage.foldername(name))[1] = auth.uid()::text);
+--
+--         CREATE POLICY "foto_owner_delete" ON storage.objects
+--           FOR DELETE TO authenticated
+--           USING (bucket_id = 'foto-kelahiran'
+--                  AND (storage.foldername(name))[1] = auth.uid()::text);
+--
+-- Catatan: upload path frontend = `${currentUser.id_user}/kelahiran_...jpg`,
+-- dan currentUser.id_user == auth.uid() (lihat trigger handle_new_user di
+-- database/07_seed_data.sql), sehingga foldername[1] cocok dengan auth.uid().
+-- ============================================================

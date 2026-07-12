@@ -86,8 +86,16 @@ LEFT JOIN penjualan pj ON pj.eartag = t.eartag;
 
 -- ============================================================
 -- VIEW 3: v_antrean_pkb
--- Sapi yang perlu diperiksa kebuntingan:
--- 30-120 hari setelah IB, dan belum ada PKB
+-- Sapi yang perlu diperiksa kebuntingan (jalur IB/non-Pesisir):
+-- mulai 30 hari setelah IB terakhir, dan belum ada PKB berhasil.
+-- Batas atas 365 hari: IB yang lebih tua dari itu tanpa PKB dianggap
+-- basi/terabaikan dan TIDAK ikut dihitung, supaya metrik dashboard tidak
+-- membengkak oleh data historis lama (menghindari full scan tak terbatas).
+-- Catatan: view ini DIPAKAI oleh v_dashboard_statistics (COUNT antrean_pkb),
+-- jadi BUKAN orphan. UI harian memakai computed flatAlertPKB (client-side)
+-- yang menangani rumpun Pesisir dengan aturan BERBEDA: 60 hari pasca
+-- MELAHIRKAN (bukan pasca IB). Bila view ini kelak dipakai untuk jalur
+-- Pesisir, tambahkan LEFT JOIN ke tabel kelahiran.
 -- ============================================================
 CREATE OR REPLACE VIEW v_antrean_pkb AS
 SELECT 
@@ -105,19 +113,19 @@ SELECT
     -- Status tenggat
     CASE
         WHEN (CURRENT_DATE - ib.tanggal_ib) BETWEEN 30 AND 60 THEN 'SEGERA'
-        WHEN (CURRENT_DATE - ib.tanggal_ib) BETWEEN 61 AND 90 THEN 'OPTIMAL'
-        WHEN (CURRENT_DATE - ib.tanggal_ib) BETWEEN 91 AND 120 THEN 'TERLEWAT'
-        ELSE 'DILUAR_JENDELA'
+        WHEN (CURRENT_DATE - ib.tanggal_ib) BETWEEN 61 AND 120 THEN 'TERLAMBAT'
+        ELSE 'SANGAT_TERLAMBAT'
     END AS status_pkb
 FROM ib
 JOIN ternak t ON t.eartag = ib.eartag
 WHERE t.status_ternak = 'Hidup'
   AND t.jenis_kelamin = 'Betina'
-  AND (CURRENT_DATE - ib.tanggal_ib) BETWEEN 30 AND 120
+  AND (CURRENT_DATE - ib.tanggal_ib) BETWEEN 30 AND 365
   AND NOT EXISTS (
       SELECT 1 FROM kebuntingan k 
       WHERE k.eartag = ib.eartag 
         AND k.tanggal_ib = ib.tanggal_ib
+        AND k.hasil_pemeriksaan IN ('Positif','Negatif')
   )
 ORDER BY (CURRENT_DATE - ib.tanggal_ib) DESC;
 

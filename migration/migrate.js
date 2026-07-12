@@ -474,8 +474,44 @@ steps.log_mutasi = async () => {
   report('log_mutasi', rows.length, res.ok, skippedCount + noLoc, res.errors);
 };
 
+steps.ref_sni = async () => {
+  const p = path.join(CSV_DIR, 'ref_sni.csv');
+  if (!fs.existsSync(p)) { console.warn('  (file tidak ada: ref_sni.csv)'); return; }
+  const raw = fs.readFileSync(p, 'utf8').split(/\r?\n/).filter(l => l.trim());
+  if (raw.length < 2) { console.log('  ref_sni: kosong'); return; }
+  const h = raw[0].split(';').map(x => x.replace(/^\uFEFF/, '').trim());
+  const idx = name => h.findIndex(c => c.toLowerCase().includes(name.toLowerCase()));
+  const iRumpun = idx('rumpun'), iSex = idx('sex'), iPer = idx('periode'),
+        iTP = idx('tinggi pundak'), iPB = idx('panjang badan'),
+        iLD = idx('lingkar dada'), iLS = idx('lingkar scrotum'), iGrade = idx('grade');
+  const rows = [];
+  for (let i = 1; i < raw.length; i++) {
+    const c = raw[i].split(';').map(x => x.trim());
+    const rumpun = mapRumpun(c[iRumpun]);
+    const sex = normSex(c[iSex]);
+    if (!sex) continue;
+    const per = (c[iPer] || '').match(/(\d+)\s*-\s*(\d+)/);
+    if (!per) continue;
+    const grade = parseInt(c[iGrade], 10);
+    if (![1, 2, 3].includes(grade)) continue;
+    rows.push({
+      rumpun, jenis_kelamin: sex,
+      periode_bulan_min: parseInt(per[1], 10),
+      periode_bulan_max: parseInt(per[2], 10),
+      grade,
+      tp_min: num(c[iTP]), pb_min: num(c[iPB]), ld_min: num(c[iLD]), ls_min: num(c[iLS])
+    });
+  }
+  if (!rows.length) { console.log('  ref_sni: tidak ada baris valid'); return; }
+  const res = await insertRows('ref_sni', rows, {
+    upsert: true,
+    onConflict: 'rumpun,jenis_kelamin,periode_bulan_min,periode_bulan_max,grade'
+  });
+  report('ref_sni', rows.length, res.ok, 0, res.errors);
+};
+
 // ---------- MAIN ----------
-const ORDER = ['ref_lokasi', 'users', 'petugas', 'bull', 'ternak',
+const ORDER = ['ref_sni', 'ref_lokasi', 'users', 'petugas', 'bull', 'ternak',
   'laporan_berahi', 'ib', 'kebuntingan', 'kelahiran', 'pengukuran', 'penjualan', 'log_mutasi'];
 
 async function main() {

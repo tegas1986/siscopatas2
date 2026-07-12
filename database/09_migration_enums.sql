@@ -18,6 +18,8 @@ END$$;
 ALTER TYPE rumpun_ternak ADD VALUE IF NOT EXISTS 'BBx Sim';
 ALTER TYPE rumpun_ternak ADD VALUE IF NOT EXISTS 'BBx Lim';
 ALTER TYPE rumpun_ternak ADD VALUE IF NOT EXISTS 'Simx Lim';
+ALTER TYPE rumpun_ternak ADD VALUE IF NOT EXISTS 'BBx Pes';
+ALTER TYPE rumpun_ternak ADD VALUE IF NOT EXISTS 'Limx Pes';
 
 -- 3) Status distribusi: tambah 'Jual SNI'
 ALTER TYPE status_distribusi ADD VALUE IF NOT EXISTS 'Jual SNI';
